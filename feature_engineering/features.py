@@ -1,29 +1,39 @@
-"""SkinFeatureVector — canonical 33-dimensional feature vector for skin emotional premium.
+"""SkinFeatureVector — canonical feature vector for skin emotional premium.
 
-Defines the validated Pydantic model consumed by the feature-engineering layer
-and the downstream XGBoost / rule-engine model layer.  The 33 fields are
-organised into the five emotional-premium groups defined in the architecture
-docs:
+This module unifies two previously-conflicting designs:
+
+* The **33-dimensional Phase-2 model** (from the feature-engineering pipeline):
+  Pydantic ``SkinFeatureVector`` with ``vlm_*`` / ``official_*`` dimensions,
+  ``to_array()``, ``availability_array()``, ``validate_ranges()``,
+  ``from_dicts()``, and the ``FEATURE_GROUPS`` / ``FEATURE_FIELD_NAMES`` /
+  ``FIELD_RANGES`` metadata used by the model layer.
+* The **sales-workbench fields** (from the evaluation / rule-engine / sales
+  calibration code): identity columns (``source_key``, ``hero_id``,
+  ``quality``, ``acquire_method`` …), boolean acquisition flags (``is_gacha``,
+  ``is_direct_sale`` …), data-quality flags (``has_detail_record``,
+  ``has_primary_asset``), and the nested ``MarketValidationSignals`` struct.
+
+All 33 *model* dimensions default to ``None`` — missing inputs are never
+silently imputed to zero.  Metadata (availability, provenance, image hash,
+pipeline status, validation errors) and the sales-workbench fields live
+*outside* the 33 model dimensions.
+
+The five emotional-premium groups (see ``FEATURE_GROUPS``):
 
     Aesthetic   (8)  w = 0.30   — VLM visual scores, official rarity, effects
     Belonging   (8)  w = 0.20   — hero popularity, IP strength, community buzz
     Showing-off (6)  w = 0.25   — in-game visibility, kill broadcast, gifting
     Collection  (7)  w = 0.15   — series, limited status, rerun history
     Surprise    (4)  w = 0.10   — acquisition method, gacha pity, drop rate
-
-All 33 fields default to ``None`` — missing inputs are never silently imputed
-to zero.  Metadata (availability, provenance, image hash, pipeline status,
-validation errors) lives *outside* the 33 model dimensions.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -161,25 +171,113 @@ FIELD_RANGES: dict[str, tuple[float | None, float | None]] = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# MarketValidationSignals — external calibration signals (sales workbench)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class MarketValidationSignals(BaseModel):
+    """External signals used to research and calibrate skin evaluation.
+
+    All fields are optional because these sources will be collected in later
+    phases. Missing values lower confidence instead of being backfilled with
+    arbitrary assumptions.
+    """
+
+    visual_score: float | None = None
+    feel_score: float | None = None
+    craftsmanship_score: float | None = None
+    collection_score: float | None = None
+    value_score: float | None = None
+    purchase_intent_score: float | None = None
+    sentiment_score: float | None = None
+    discussion_count: int | None = None
+    video_views: int | None = None
+    marketing_volume: int | None = None
+    sales_volume: int | None = None
+    avg_spend_to_obtain: float | None = None
+    ownership_rate: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> "MarketValidationSignals":
+        data = data or {}
+        return cls(
+            visual_score=_optional_float(data.get("visual_score")),
+            feel_score=_optional_float(data.get("feel_score")),
+            craftsmanship_score=_optional_float(data.get("craftsmanship_score")),
+            collection_score=_optional_float(data.get("collection_score")),
+            value_score=_optional_float(data.get("value_score")),
+            purchase_intent_score=_optional_float(data.get("purchase_intent_score")),
+            sentiment_score=_optional_float(data.get("sentiment_score")),
+            discussion_count=_optional_int(data.get("discussion_count")),
+            video_views=_optional_int(data.get("video_views")),
+            marketing_volume=_optional_int(data.get("marketing_volume")),
+            sales_volume=_optional_int(data.get("sales_volume")),
+            avg_spend_to_obtain=_optional_float(data.get("avg_spend_to_obtain")),
+            ownership_rate=_optional_float(data.get("ownership_rate")),
+        )
+
+    def present_fields(self) -> list[str]:
+        return [
+            name
+            for name in (
+                "visual_score",
+                "feel_score",
+                "craftsmanship_score",
+                "collection_score",
+                "value_score",
+                "purchase_intent_score",
+                "sentiment_score",
+                "discussion_count",
+                "video_views",
+                "marketing_volume",
+                "sales_volume",
+                "avg_spend_to_obtain",
+                "ownership_rate",
+            )
+            if getattr(self, name) is not None
+        ]
+
+    def coverage(self) -> float:
+        return len(self.present_fields()) / 13
+
+    def aspect_coverage(self) -> float:
+        aspect_fields = (
+            "visual_score",
+            "feel_score",
+            "craftsmanship_score",
+            "collection_score",
+            "value_score",
+            "purchase_intent_score",
+        )
+        return sum(1 for name in aspect_fields if getattr(self, name) is not None) / len(aspect_fields)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SkinFeatureVector
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 class SkinFeatureVector(BaseModel):
-    """Canonical 33-dimensional feature vector for one skin.
+    """Canonical feature vector for one skin.
+
+    Combines the 33-dimensional Phase-2 model features with the
+    sales-workbench identity / acquisition / data-quality fields.
 
     All 33 model features are nullable by default.  Call ``to_array()`` to
     get a fixed-order list of values for the model layer, and
     ``availability_array()`` for the corresponding binary flags.
 
     Metadata fields (schema_version, image_hash, pipeline_status, provenance,
-    validation_errors) live outside the 33 dimensions and are NOT included in
-    ``to_array()`` output.
+    validation_errors) and sales-workbench fields (source_key, hero_id,
+    quality, market_signals, …) live *outside* the 33 dimensions and are NOT
+    included in ``to_array()`` output.
     """
 
     # ── Identity ──
-    skin_key: str
+    skin_key: str = ""
+    source_key: str = ""          # alias used by the sales workbench
     skin_id: str = ""
+    hero_id: str = ""
     hero_name: str = ""
     skin_name: str = ""
 
@@ -230,6 +328,24 @@ class SkinFeatureVector(BaseModel):
     gacha_pity_amount: float | None = Field(default=None, ge=0.0)
     drop_rate_percentile: float | None = Field(default=None, ge=0.0, le=1.0)
     avg_spend_to_obtain: float | None = Field(default=None, ge=0.0)
+
+    # ── Sales-workbench fields (outside the 33 model dimensions) ──────────
+
+    quality: str = ""
+    acquire_method: str = ""
+    price_text: str | None = None
+    quality_score: float = 0.0
+    is_gacha: bool = False
+    is_direct_sale: bool = False
+    is_event: bool = False
+    is_battle_pass: bool = False
+    is_shard_exchange: bool = False
+    has_detail_record: bool = False
+    has_primary_asset: bool = False
+    hero_skin_count: int = 0
+    market_signals: MarketValidationSignals = Field(
+        default_factory=MarketValidationSignals
+    )
 
     # ── Metadata (outside the 33 model dimensions) ────────────────────────
 
@@ -331,6 +447,33 @@ class SkinFeatureVector(BaseModel):
             coverage[group] = available / len(names)
         return coverage
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the sales-workbench dict shape (used by ``app.py`` / ``RuleEngine``)."""
+        return {
+            "source_key": self.source_key or self.skin_key,
+            "hero_id": self.hero_id,
+            "hero_name": self.hero_name,
+            "skin_name": self.skin_name,
+            "skin_id": self.skin_id,
+            "quality": self.quality,
+            "online_date": self.provenance.get("online_date", ""),
+            "acquire_method": self.acquire_method,
+            "price_text": self.price_text,
+            "official_tier": self.official_tier if self.official_tier is not None else 0,
+            "quality_score": self.quality_score,
+            "is_limited": bool(self.is_limited),
+            "is_gacha": self.is_gacha,
+            "is_direct_sale": self.is_direct_sale,
+            "is_event": self.is_event,
+            "is_battle_pass": self.is_battle_pass,
+            "is_shard_exchange": self.is_shard_exchange,
+            "has_detail_record": self.has_detail_record,
+            "has_primary_asset": self.has_primary_asset,
+            "skin_age_days": self.skin_age_days,
+            "hero_skin_count": self.hero_skin_count,
+            "market_signals": self.market_signals.model_dump(),
+        }
+
     # ── Class methods ─────────────────────────────────────────────────────
 
     @classmethod
@@ -365,6 +508,7 @@ class SkinFeatureVector(BaseModel):
 
         field_values: dict[str, Any] = {
             "skin_key": skin_key,
+            "source_key": skin_key,
             "skin_id": skin_id,
             "hero_name": hero_name,
             "skin_name": skin_name,
@@ -421,6 +565,7 @@ class SkinFeatureVector(BaseModel):
 # Provenance constants
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 class Provenance:
     """Standard provenance labels for feature sources."""
 
@@ -434,3 +579,26 @@ class Provenance:
     UNAVAILABLE = "unavailable"
     IMAGE_MISSING = "image_missing"
     AMBIGUOUS = "source:ambiguous"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Optional-value helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

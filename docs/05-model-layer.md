@@ -33,6 +33,123 @@
 
 在标注数据不足（<50 条）时，使用加权评分卡：
 
+当前已实现第一版研究型 MVP。它不会把官方元数据硬转成最终分数，而是区分：
+
+- `official_prior_score`：官方品质、限定、获取方式、图片/详情完整度形成的弱先验。
+- `evaluation_score`：来自舆论、营销、销量等外部证据的维度研究分。证据不足时为 `null`。
+- `confidence` / `validation_status`：明确提示当前是否已被外部市场信号验证。
+
+```bash
+python scripts/evaluate_skin.py --search 地狱岩魂
+python scripts/evaluate_skin.py --source-key 105-02 --json
+```
+
+实现文件：
+
+| 文件 | 说明 |
+|------|------|
+| `feature_engineering/features.py` | 评分特征与市场验证信号数据结构 |
+| `feature_engineering/pipeline.py` | 从 SQLite 皮肤数据构建评分特征 |
+| `models/rule_engine.py` | 五维度规则评分与置信度计算 |
+| `scripts/evaluate_skin.py` | 单皮肤评估 CLI |
+
+### 市场验证信号
+
+官方数据只能支撑冷启动分数，最终需要舆论和营销量验证。CLI 支持传入 JSON：
+
+```json
+{
+  "visual_score": 0.78,
+  "feel_score": 0.82,
+  "craftsmanship_score": 0.75,
+  "collection_score": 0.68,
+  "value_score": 0.70,
+  "purchase_intent_score": 0.77,
+  "sentiment_score": 0.82,
+  "discussion_count": 5000,
+  "video_views": 1200000,
+  "marketing_volume": 3000,
+  "sales_volume": 100000,
+  "avg_spend_to_obtain": 180,
+  "ownership_rate": 0.25
+}
+```
+
+也可以按 `source_key` 组织多皮肤信号：
+
+```json
+{
+  "105-02": {
+    "visual_score": 0.78,
+    "feel_score": 0.82,
+    "craftsmanship_score": 0.75,
+    "collection_score": 0.68,
+    "value_score": 0.70,
+    "purchase_intent_score": 0.77,
+    "sentiment_score": 0.82,
+    "discussion_count": 5000,
+    "video_views": 1200000,
+    "marketing_volume": 3000,
+    "sales_volume": 100000
+  }
+}
+```
+
+运行：
+
+```bash
+python scripts/evaluate_skin.py --source-key 105-02 --signals-json market_signals.json
+```
+
+也可以先把证据导入 SQLite，再直接评估：
+
+```bash
+python scripts/import_market_signals.py market_signals.json
+python scripts/evaluate_skin.py --source-key 105-02
+```
+
+B 站支持两种证据采集方式。第一种是已知视频 URL/BVID 的稳定采集：
+
+```bash
+python scripts/fetch_bilibili_evidence.py \
+  --source-key 105-02 \
+  --video https://www.bilibili.com/video/BVxxxxxxxxxx \
+  --aspect-tags visual,feel,craftsmanship
+```
+
+该脚本会存储视频标题、作者、URL、播放、弹幕、评论、收藏、投币、分享、点赞等指标，并聚合成 `video_views`、`discussion_count` 和传播互动量。观感、手感、品质、收藏价值、性价比、购买意愿仍需人工标注或后续 NLP 归因后写入。
+
+第二种是按皮肤 `source_key` 搜索并导入。该路径参考 Agent-Reach 的 B 站路由：优先可由 `bili-cli` 增强，当前本地可用的是 B 站 `search/all/v2` 公共搜索 API。
+
+```bash
+python scripts/search_bilibili_evidence.py \
+  --source-key 105-02 \
+  --limit 5 \
+  --json
+```
+
+默认查询会由 `王者荣耀 + 英雄名 + 皮肤名 + 皮肤` 组成，并要求搜索结果标题或描述命中英雄名/皮肤名，降低泛热视频误归因风险。
+
+微博评论可以先抓取成 JSON，再导入到明确的皮肤 `source_key`：
+
+```bash
+python scripts/import_weibo_evidence.py \
+  data/weibo_comments/wzry_skin_comments_2026-06-23.json \
+  --source-key 105-02
+```
+
+该导入器会保存原始评论证据，并按关键词保守归因到观感、手感、品质、收藏价值、性价比、购买意愿和整体情绪。维度分只有在足够多评论命中同一维度时才输出，避免把单条评论放大成最终评分。
+
+没有市场信号时，系统只输出 `official_prior_score`，`evaluation_score = null`，`validation_status = insufficient_market_evidence`；证据覆盖足够时会变成 `evidence_validated`。
+
+面向销量的下一层不是直接把 `evaluation_score` 当作销量，而是生成销售动作报告：
+
+```bash
+python scripts/generate_sales_report.py --source-key 105-02
+```
+
+该报告会基于评估结果和市场证据输出 `decision`、`sales_readiness`、购买驱动力、转化阻力、价格动作和缺失证据。证据不足时默认建议继续采集，不建议放量投放或调整价格。
+
 ```python
 class RuleEngine:
     """基于领域知识的情绪溢价规则引擎"""
@@ -193,6 +310,32 @@ data_size=500 → alpha=0.33 (几乎纯 ML)
 | R² | > 0.7 | 可解释方差比例 |
 | MAE | < 10 (满分 100) | 平均绝对误差 |
 | 维度一致性 | > 0.8 | 五维度排序与人工标注的 Spearman 相关系数 |
+
+## 销量偏差校验
+
+评分和销量的关系必须拆开处理：
+
+1. `evaluation_score` 用观感、手感、品质、收藏、性价比、购买意愿和非销量热度证据计算。
+2. 销量证据单独进入 `opinion_evidence_items`，可以是真实销量、估算销量、销量榜名次、销量上限/下限。
+3. `models.sales_deviation.compare_score_to_sales` 先计算 sales-blind score，再和 `sales_score` 比较，输出 `gap` 和 `gap_direction`。
+
+这样可以避免把销量写入评分后再拿评分解释销量。当前偏差方向：
+
+- `aligned`：评分与销量代理基本一致。
+- `score_above_sales`：评分高于销量代理，可能是价格、渠道、转化或英雄热度问题。
+- `sales_above_score`：销量高于评分，说明 IP、人气、返场、联动或渠道需求被当前评分低估。
+- `insufficient_sales_data`：没有可用销量证据。
+
+### ML 校准层
+
+`models.sales_calibration` 提供一个 sales-blind 的 RBF kernel ridge 校准器：
+
+- 输入：原始评分、官方先验、品质层级、上架时间、获取方式、英雄皮肤数量、非销量市场信号。
+- 禁用输入：销量、拥有率、平均获取花费等直接销量目标字段。
+- 输出：独立的 `calibrated_score`，不覆盖 `evaluation_score`。
+- 停止条件：`abs(calibrated_score - sales_score) > 10` 的样本数通过单侧二项检验，拒绝 `p >= 0.10`。
+
+当前样例集达到训练集校准目标，但 `leave_one_out` 仍未通过，说明它是“小样本校准器”，还需要持续补销量榜、真实销量、舆情维度评分后再判断泛化。
 
 ## 下一步
 

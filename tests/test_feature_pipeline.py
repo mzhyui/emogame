@@ -35,7 +35,7 @@ class FeaturePipelineOfficialOnlyTests(unittest.TestCase):
             hero_name="李白",
             skin_name="诗剑行",
         )
-        self.assertEqual(features["official_tier"], 3)
+        self.assertEqual(features["official_tier"], 4)
         self.assertIsNotNone(features["skin_age_days"])
         self.assertIsNotNone(features["has_voice_pack"])
         self.assertIsNotNone(features["has_custom_anim"])

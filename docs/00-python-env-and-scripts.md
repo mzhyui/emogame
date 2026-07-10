@@ -80,7 +80,12 @@ vlm/                   # 本地视觉模型测试脚本
 crawlers/wzry_skin_crawler.py
 ```
 
-它会从王者荣耀官网 JSON 数据源读取皮肤信息，保存元数据到 SQLite，并下载皮肤图片到本地。
+它会从两个王者荣耀官网 JSON 数据源读取数据：
+
+- `herolist.json`：作为英雄与皮肤名称全集基准。
+- `heroskinlist.json`：补充皮肤 ID、品质、上线日期、获取方式、详情页、视频和图片 URL。
+
+脚本会把合并后的元数据保存到 SQLite，并按需下载皮肤图片到本地。
 
 ### 快速试跑
 
@@ -100,9 +105,15 @@ data/wzry_skins/images/
 脚本结束时会打印类似信息：
 
 ```text
-skins=10 downloaded_or_existing=10 image_failed=0
+heroes=130 skins=10 with_detail=10 assets=30 downloaded_or_existing=10 image_failed=0
 db=data/wzry_skins/skins.sqlite3
 images=data/wzry_skins/images
+```
+
+如果只想检查元数据合并，不下载图片：
+
+```bash
+python3 crawlers/wzry_skin_crawler.py --limit 50 --skip-images
 ```
 
 ### 常用参数
@@ -114,6 +125,8 @@ images=data/wzry_skins/images
 | `--db` | SQLite 数据库保存路径 | `--db data/wzry_skins/skins.sqlite3` |
 | `--sleep` | 每次图片请求之间的等待秒数 | `--sleep 0.1` |
 | `--overwrite` | 已存在图片也重新下载 | `--overwrite` |
+| `--skip-images` | 只采集元数据和图片 URL，不下载图片 | `--skip-images` |
+| `--download-assets` | 下载的资产类型，默认 `skin_primary`，可用 `all` | `--download-assets all` |
 
 全量采集示例：
 
@@ -136,13 +149,115 @@ sqlite3 data/wzry_skins/skins.sqlite3 "select count(*) from skins;"
 sqlite3 data/wzry_skins/skins.sqlite3 "select hero_name, skin_name, quality, price_text from skins limit 10;"
 ```
 
+当前数据库会包含：
+
+| 表 | 内容 |
+|------|------|
+| `heroes` | 英雄 ID、名称、称号、定位、皮肤数量 |
+| `skins` | 合并后的皮肤目录、官方增强字段、是否匹配到详情源 |
+| `skin_assets` | 每个皮肤的图片 URL、本地路径、下载状态、文件 hash |
+| `crawl_runs` | 每次采集的来源 URL、数量统计和失败数量 |
+
+项目内部读取 SQLite 时应优先使用 `data/skin_repository.py`，不要在前端、模型或 Agent 层重复手写 SQL。
+
+采集后可以运行数据质量检查：
+
+```bash
+python3 scripts/check_wzry_data.py
+```
+
+输出 JSON 方便接入自动化检查：
+
+```bash
+python3 scripts/check_wzry_data.py --json
+```
+
+## 7. 运行单皮肤情绪溢价评估
+
+采集和查询层跑通后，可以对单个皮肤执行 MVP 规则评分：
+
+```bash
+python3 scripts/evaluate_skin.py --search 地狱岩魂
+```
+
+如果已经有舆论、营销或销量验证信号，可以通过 JSON 注入：
+
+```bash
+python3 scripts/evaluate_skin.py --source-key 105-02 --signals-json market_signals.json --json
+```
+
+也可以先导入本地证据库：
+
+```bash
+python3 scripts/import_market_signals.py market_signals.json
+python3 scripts/evaluate_skin.py --source-key 105-02
+```
+
+采集已知 B 站视频 URL/BVID 的舆论证据：
+
+```bash
+python3 scripts/fetch_bilibili_evidence.py \
+  --source-key 105-02 \
+  --video https://www.bilibili.com/video/BVxxxxxxxxxx \
+  --aspect-tags visual,feel,craftsmanship
+```
+
+按皮肤自动搜索 B 站并导入命中的视频证据：
+
+```bash
+python3 scripts/search_bilibili_evidence.py \
+  --source-key 105-02 \
+  --limit 5 \
+  --json
+```
+
+导入已经抓取好的微博评论证据：
+
+```bash
+python3 scripts/import_weibo_evidence.py \
+  data/weibo_comments/wzry_skin_comments_2026-06-23.json \
+  --source-key 105-02
+```
+
+当前评估系统会输出皮肤维度证据分、官方弱先验、置信度、验证状态和缺失信号提示。没有市场信号时不会输出最终研究分，只会提示 `insufficient_market_evidence`。
+
+生成面向运营/销售的动作报告：
+
+```bash
+python3 scripts/generate_sales_report.py --source-key 105-02
+python3 scripts/generate_sales_report.py --search 龙胆 --json
+```
+
+销售报告不会把分数直接等同销量，而是输出放量决策、购买驱动力、转化阻力、价格动作建议和缺失证据。
+
+启动本地 FastAPI 服务：
+
+```bash
+python3 -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+核心端点：
+
+- `GET /api/health`
+- `GET /api/skins?search=龙胆`
+- `POST /api/evaluate`
+- `POST /api/sales-report`
+
+启动 Streamlit 工作台：
+
+```bash
+python3 -m streamlit run app.py --server.port 8501
+```
+
+工作台支持皮肤搜索、数据库证据/忽略证据/手动模拟三种模式，并展示销售决策、动作建议、证据结构和 JSON 导出。
+
 也可以查看本地图片数量：
 
 ```bash
 find data/wzry_skins/images -type f | wc -l
 ```
 
-## 7. 检查本地 hero-skin-image 数据
+## 8. 检查本地 hero-skin-image 数据
 
 仓库中还有一个本地图片数据目录：
 
@@ -158,7 +273,7 @@ python3 test_wzry_skins.py
 
 这个脚本适合用来确认本地图片集是否完整，以及英雄、皮肤、图片文件名之间是否能够对应。
 
-## 8. 运行本地 VLM 图片评估脚本
+## 9. 运行本地 VLM 图片评估脚本
 
 如果本机安装并启动了 Ollama，可以使用 `vlm/ollama_vlm_test.py` 对单张皮肤图做视觉模型测试。
 
@@ -194,7 +309,45 @@ python3 vlm/ollama_vlm_test.py \
 | `--prompt` | 使用的评估模板，当前支持 `l1`、`l2` |
 | `--timeout` | 单个模型请求超时时间 |
 
-## 9. 常见问题
+## 10. 销量证据与评分/销量偏差
+
+销量证据不直接写进情绪评分。先把公开销量、销量榜、估算销量作为证据入库，再用 sales-blind 评分和销量代理分做偏差比较：
+
+```bash
+python3 scripts/import_sales_evidence.py examples/public_sales_evidence_demo.json
+python3 scripts/compare_score_sales.py --source-key 167-12
+python3 scripts/compare_score_sales.py --all-with-sales --limit 20
+python3 scripts/compare_score_sales.py --all-with-sales --json
+```
+
+偏差输出里的 `score` 会排除直接销量字段，避免“用销量参与评分，再拿评分验证销量”的循环。`sales_basis` 会标明销量证据类型：
+
+- `sales_volume`：明确销量。
+- `estimated_sales_volume`：公开来源估算销量。
+- `sales_rank`：公开热销榜/销量榜名次代理。
+- `sales_volume_upper_bound` / `sales_volume_lower_bound`：上限或下限声明，只能作弱校验。
+
+本地 API 也提供同一能力：
+
+```bash
+POST /api/sales-gap
+```
+
+如需运行 ML 校准 loop，让 `|score - sales_score| > 10` 通过单侧二项检验降到 `<10%` 概率事件：
+
+```bash
+python3 scripts/calibrate_sales_score.py \
+  --write-model outputs/sales_calibration_model.json \
+  --write-report outputs/sales_calibration_report.json
+
+python3 scripts/compare_score_sales.py \
+  --all-with-sales \
+  --calibration-model outputs/sales_calibration_model.json
+```
+
+当前校准层不会覆盖原始 `evaluation_score`，而是输出 `calibrated_score`。报告同时包含 `baseline`、`calibrated` 和 `leave_one_out`，防止把训练集拟合误读成泛化能力。
+
+## 11. 常见问题
 
 ### ModuleNotFoundError
 
@@ -223,7 +376,7 @@ ollama list
 
 如果该命令也失败，先启动或安装 Ollama。
 
-## 10. 推荐的新手运行顺序
+## 12. 推荐的新手运行顺序
 
 ```bash
 cd /home/mzhyui/git/emogame
@@ -233,6 +386,8 @@ pip install -r requirements.txt
 
 python3 crawlers/wzry_skin_crawler.py --limit 10
 sqlite3 data/wzry_skins/skins.sqlite3 "select count(*) from skins;"
+python3 scripts/check_wzry_data.py
+python3 scripts/evaluate_skin.py --search 地狱岩魂
 python3 test_wzry_skins.py
 ```
 

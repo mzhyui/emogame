@@ -75,6 +75,59 @@
 
 ## 核心爬虫接口设计
 
+当前已实现第一阶段官方数据采集脚本：
+
+```bash
+python crawlers/wzry_skin_crawler.py --limit 50
+```
+
+采集策略：
+
+1. 使用 `https://pvp.qq.com/web201605/js/herolist.json` 作为英雄和皮肤名称全集基准。
+2. 使用 `https://pvp.qq.com/zlkdatasys/heroskinlist.json` 补充皮肤 ID、品质、上线时间、获取方式、介绍、图片、详情页和视频。
+3. 按 `(hero_name, skin_name)` 合并两个官方源。
+4. 没有匹配到详情源的目录皮肤仍然保留，标记为 `has_detail_record = 0`。
+5. 图片资产写入 `skin_assets`，默认只下载 `skin_primary`，也可以用 `--skip-images` 只保存 URL。
+
+SQLite 表：
+
+| 表 | 用途 |
+|------|------|
+| `crawl_runs` | 记录每次采集的来源、数量和失败统计 |
+| `heroes` | 英雄基础信息和皮肤数量 |
+| `skins` | 皮肤目录与官方增强字段 |
+| `skin_assets` | 图片 URL、本地路径、下载状态和 SHA-256 |
+
+查询与过滤统一通过 `data/skin_repository.py`：
+
+- `list_heroes()`：英雄列表，可按定位和关键词过滤。
+- `list_skins()`：皮肤列表，可按英雄、品质、详情匹配状态、目录来源和主图状态过滤。
+- `search_skins()`：按英雄名、皮肤名或皮肤 ID 搜索。
+- `get_skin()` / `list_assets()`：读取单个皮肤详情和图片资产。
+- `stats()`：输出英雄数、皮肤数、资产数、缺失详情、缺失主图和下载失败数量。
+
+数据质量检查脚本：
+
+```bash
+python scripts/check_wzry_data.py
+python scripts/check_wzry_data.py --json
+```
+
+第一阶段已接入微博评论、B 站视频和手工证据导入；贴吧、NGA 和二级市场数据等来源在官方数据闭环稳定后再接入，用于补充热度、口碑和价格事件。
+
+### 舆论证据采集边界
+
+当前已接入的是“已知证据导入”，不是全网搜索爬虫：
+
+- `scripts/import_market_signals.py`：导入人工整理或半自动整理的维度证据。
+- `scripts/fetch_bilibili_evidence.py`：对已知 B 站视频 URL/BVID 拉取视频指标。
+- `scripts/search_bilibili_evidence.py`：按明确皮肤 `source_key` 生成关键词，搜索 B 站视频并导入命中证据。
+- `crawlers/weibo_skin_comment_crawler.py`：抓取王者荣耀官方微博或指定 MID 的皮肤评论。
+- `scripts/import_weibo_evidence.py`：把已抓取的微博评论导入到某个明确 `source_key` 的舆论证据库。
+- `data/market_signal_repository.py`：存储聚合信号和原始证据条目。
+
+微博评论和 B 站搜索结果必须显式指定 `source_key` 后才能进入评估，避免把泛讨论、多皮肤联动或热点混剪错误归因到单个皮肤。这样可以先保证每条证据可追溯，避免把搜索噪声直接灌进评分系统。后续再扩展贴吧、NGA、评论文本抓取和更细的 NLP 维度归因。
+
 ```python
 # crawlers/manager.py
 class CrawlerManager:

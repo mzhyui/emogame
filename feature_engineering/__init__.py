@@ -11,13 +11,14 @@ from feature_engineering.features import (
     AcquisitionMethod,
     IPSourceType,
     LimitedType,
+    MarketValidationSignals,
     Provenance,
     SkinFeatureVector,
     VisibilityLevel,
 )
 from feature_engineering.export import export_csv, export_jsonl, export_from_store
 from feature_engineering.official_extractor import OfficialFeatureMapper
-from feature_engineering.pipeline import FeaturePipeline
+from feature_engineering.pipeline import FeatureBuilder, FeaturePipeline
 from feature_engineering.report import generate_report
 
 __all__ = [
@@ -26,8 +27,10 @@ __all__ = [
     "FEATURE_GROUPS",
     "FIELD_RANGES",
     "FeaturePipeline",
+    "FeatureBuilder",
     "IPSourceType",
     "LimitedType",
+    "MarketValidationSignals",
     "OfficialFeatureMapper",
     "Provenance",
     "SkinFeatureVector",

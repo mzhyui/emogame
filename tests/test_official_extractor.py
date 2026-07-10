@@ -19,8 +19,8 @@ class OfficialTierMappingTests(unittest.TestCase):
             "伴生": 0,
             "勇者": 1,
             "史诗": 2,
-            "传说": 3,
-            "无双": 4,
+            "传说": 4,
+            "无双": 5,
             "荣耀典藏": 5,
         }
         for quality, tier in expected.items():
@@ -31,10 +31,10 @@ class OfficialTierMappingTests(unittest.TestCase):
 
     def test_limited_variants(self):
         cases = {
-            "勇者限定": 1,
-            "史诗限定": 2,
-            "传说限定": 3,
-            "无双限定": 4,
+            "勇者限定": 2,
+            "史诗限定": 3,
+            "传说限定": 4,
+            "无双限定": 5,
         }
         for quality, tier in cases.items():
             value, _ = extract_official_tier(quality)
@@ -57,7 +57,7 @@ class OfficialTierMappingTests(unittest.TestCase):
     def test_substring_match(self):
         """Quality strings containing known keywords should match."""
         value, _ = extract_official_tier("传说品质皮肤")
-        self.assertEqual(value, 3)
+        self.assertEqual(value, 4)
 
     def test_blank_quality(self):
         value, prov = extract_official_tier("   ")
@@ -227,7 +227,7 @@ class FullMapperTests(unittest.TestCase):
             hero_name="李白",
             skin_name="诗剑行",
         )
-        self.assertEqual(features["official_tier"], 3)
+        self.assertEqual(features["official_tier"], 4)
         self.assertIsInstance(features["skin_age_days"], int)
         self.assertEqual(features["acquisition_method"], 0)
         self.assertIsNotNone(features["has_voice_pack"])

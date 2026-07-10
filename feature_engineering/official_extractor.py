@@ -24,17 +24,23 @@ from feature_engineering.features import Provenance
 # Ordered from most-specific to least-specific to handle substring matches.
 QUALITY_TO_TIER: dict[str, int] = {
     "荣耀典藏": 5,
-    "无双限定": 4,
-    "无双": 4,
+    "无双限定": 5,
+    "无双": 5,
     "珍品传说": 4,
-    "传说限定": 3,
-    "传说": 3,
-    "史诗限定": 2,
+    "传说限定": 4,
+    "传说": 4,
+    "珍品史诗": 3,
+    "史诗限定": 3,
     "史诗": 2,
-    "勇者限定": 1,
+    "勇者限定": 2,
     "勇者": 1,
     "伴生": 0,
 }
+
+# Pre-sorted items for extract_official_tier substring-matching (longest first).
+_QUALITY_TO_TIER_SORTED: list[tuple[str, int]] = sorted(
+    QUALITY_TO_TIER.items(), key=lambda x: -len(x[0])
+)
 
 # Patterns that indicate a limited skin.
 LIMITED_PATTERNS: list[str] = [
@@ -108,7 +114,7 @@ def extract_official_tier(quality: str) -> tuple[int | None, str]:
     if q in QUALITY_TO_TIER:
         return QUALITY_TO_TIER[q], Provenance.OFFICIAL_QUALITY_MAP
     # Try substring match (longest first)
-    for key, tier in sorted(QUALITY_TO_TIER.items(), key=lambda x: -len(x[0])):
+    for key, tier in _QUALITY_TO_TIER_SORTED:
         if key in q:
             return tier, Provenance.OFFICIAL_QUALITY_MAP
     logger.debug(f"Unknown quality string: {q!r}")
