@@ -113,6 +113,74 @@ class SalesDeviationTest(unittest.TestCase):
         self.assertIsNone(signals.avg_spend_to_obtain)
         self.assertIsNone(signals.ownership_rate)
 
+    def _cash_item(self, volume: int, confidence: float | None = 0.55) -> dict:
+        resolved = {"sales_volume": volume, "volume_relation": "estimated", "confidence": confidence,
+                    "attribution_method": "csv_release_window_uplift"}
+        return {"title": "现金价值归因", "url": None, "cash_value_resolved": resolved}
+
+    def test_cash_value_informs_gap_when_no_public_evidence(self):
+        # Lowest-priority candidate: only wins when no public evidence exists.
+        result = compare_score_to_sales(
+            feature_vector(), evaluation(65), [self._cash_item(1_000_000, 0.6)]
+        )
+
+        self.assertEqual(result["sales_basis"], "cash_value_attributed")
+        self.assertGreater(result["sales_score"], 0)
+        self.assertIn("sales_volume_is_estimated", result["warnings"])
+        self.assertLess(result["gap"], 0)
+
+    def test_cash_value_loses_to_exact_public_volume(self):
+        # Exact volume (priority 50) must outrank cash-value (priority 22).
+        result = compare_score_to_sales(
+            feature_vector(),
+            evaluation(65),
+            [
+                self._cash_item(1_000_000, 0.6),
+                {
+                    "platform": "sales_public",
+                    "title": "exact",
+                    "metrics": {"sales_volume": 50_000, "sales_volume_relation": "exact"},
+                },
+            ],
+        )
+
+        self.assertEqual(result["sales_basis"], "sales_volume")
+        self.assertNotEqual(result["sales_basis"], "cash_value_attributed")
+
+    def test_cash_value_loses_to_aggregate_market_signal_volume(self):
+        # Aggregate market_signals volume (priority 25) outranks cash-value (22).
+        result = compare_score_to_sales(
+            feature_vector(MarketValidationSignals(sales_volume=30_000)),
+            evaluation(65),
+            [self._cash_item(1_000_000, 0.6)],
+        )
+
+        self.assertEqual(result["sales_basis"], "aggregate_sales_volume")
+        self.assertNotEqual(result["sales_basis"], "cash_value_attributed")
+
+    def test_cash_value_zero_volume_is_ignored(self):
+        # A zero/None attributed volume must not produce a candidate.
+        result = compare_score_to_sales(
+            feature_vector(), evaluation(65), [self._cash_item(0, 0.6)]
+        )
+
+        self.assertEqual(result["gap_direction"], "insufficient_sales_data")
+        self.assertIsNone(result["sales_score"])
+
+    def test_cash_value_legacy_aggregate_is_not_double_counted(self):
+        # The legacy-aggregate fallback must not be re-surfaced as a cash-value
+        # candidate; the aggregate path (priority 25) already handles it.
+        legacy = {"sales_volume": 30_000, "volume_relation": "estimated",
+                  "confidence": 0.7, "attribution_method": "legacy_aggregate"}
+        result = compare_score_to_sales(
+            feature_vector(),
+            evaluation(65),
+            [{"title": "现金价值归因", "url": None, "cash_value_resolved": legacy}],
+        )
+
+        self.assertEqual(result["gap_direction"], "insufficient_sales_data")
+        self.assertIsNone(result["sales_score"])
+
 
 if __name__ == "__main__":
     unittest.main()

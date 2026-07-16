@@ -1,0 +1,20 @@
+2026-06-25 00:00:36,062 - config_util.py - WARNING - end_date值应为yyyy-mm-dd形式或"now",请重新输入
+2026-06-25 00:00:36,063 - config_util.py - WARNING - 2值应为0或1,请重新输入
+2026-06-25 00:00:36,063 - config_util.py - WARNING - global_wait参数内的值应为长度为2的list类型,请重新输入
+2026-06-25 00:00:36,064 - config_util.py - WARNING - global_wait列表中的值应为大于0的整数,请重新输入
+2026-06-25 00:00:36,064 - config_util.py - WARNING - global_wait参数值应为list类型,请重新输入
+2026-06-25 00:00:36,066 - config_util.py - WARNING - global_wait参数内的list长度应为2,请重新输入
+2026-06-25 00:00:36,066 - config_util.py - WARNING - global_wait列表中的值应为大于0的整数,请重新输入
+2026-06-25 00:00:36,068 - config_util.py - WARNING - -1值应为0或1,请重新输入
+2026-06-25 00:00:36,069 - config_util.py - WARNING - random_wait_pages列表中的值应为整数类型,请重新输入
+2026-06-25 00:00:36,069 - config_util.py - WARNING - random_wait_pages参数值应为list类型,请重新输入
+2026-06-25 00:00:36,070 - config_util.py - WARNING - random_wait_pages列表中的值应大于0,请重新输入
+2026-06-25 00:00:36,070 - config_util.py - WARNING - random_wait_seconds列表中的值应为整数类型,请重新输入
+2026-06-25 00:00:36,071 - config_util.py - WARNING - random_wait_seconds参数值应为list类型,请重新输入
+2026-06-25 00:00:36,071 - config_util.py - WARNING - random_wait_seconds列表中的值应大于0,请重新输入
+2026-06-25 00:00:36,072 - config_util.py - WARNING - since_date值应为yyyy-mm-dd形式或整数,请重新输入
+2026-06-25 00:00:36,072 - config_util.py - WARNING - 不存在/nonexistent/path.txt文件
+2026-06-25 00:00:36,073 - config_util.py - WARNING - 3值应为0或1,请重新输入
+2026-06-25 00:00:36,074 - config_util.py - WARNING - xml为无效模式，请从txt、csv、json、post、mongo、sqlite, kafka和mysql中挑选一个或多个作为write_mode
+2026-06-25 00:00:36,075 - config_util.py - WARNING - write_mode值应为list类型
+2026-06-25 00:00:36,076 - util.py - WARNING - string to int, the input string is empty!

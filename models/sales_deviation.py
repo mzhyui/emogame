@@ -231,6 +231,35 @@ def select_sales_candidate(
             )
         )
 
+    # Cash-value attribution: lowest priority (estimated, not observed). It is
+    # appended via the evidence_items list so the existing pipeline ranks it
+    # alongside public candidates. Priority 22 sits below the aggregate
+    # market-signal volume (25) so public evidence always wins. The
+    # legacy-aggregate fallback is excluded here (not just at the call site)
+    # because the aggregate candidate at priority 25 already covers it.
+    for item in evidence_items:
+        cash = item.get("cash_value_resolved")
+        if cash is None:
+            continue
+        if cash.get("attribution_method") == "legacy_aggregate":
+            continue
+        volume = cash.get("sales_volume")
+        if volume in (None, 0):
+            continue
+        candidates.append(
+            (
+                22,
+                volume_candidate(
+                    volume,
+                    basis="cash_value_attributed",
+                    relation="estimated",
+                    confidence=float(cash.get("confidence") or 0.55),
+                    source_title=item.get("title"),
+                    source_url=item.get("url"),
+                ),
+            )
+        )
+
     if not candidates:
         return None
 

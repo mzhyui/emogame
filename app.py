@@ -224,6 +224,19 @@ def build_payload(
         evaluation_score=evaluation.evaluation_score,
         legacy_signals=market_repo.get_signals(source_key),
     )
+    # Surface cash-value as a low-priority sales-evidence candidate for the
+    # gap comparison. It never feeds the emotional score (kept sales-blind).
+    # Only real cash-value facts (CSV attribution / manual entry) count — the
+    # legacy-aggregate fallback is already handled by the aggregate candidate.
+    resolved = cash_value.get("resolved")
+    if resolved and resolved.get("attribution_method") != "legacy_aggregate":
+        evidence.append(
+            {
+                "title": "现金价值归因",
+                "url": None,
+                "cash_value_resolved": resolved,
+            }
+        )
     sales_report = report.to_dict()
     # Cash evidence is an auditable parallel section, never folded into the
     # emotional score or represented as exact skin revenue.

@@ -158,6 +158,19 @@ def sales_gap(
         sales_features.source_key,
         official_only=official_only,
     )
+    cash_value = CashValueService(db_path).cash_value(
+        sales_features.source_key,
+        evaluation_score=evaluation.evaluation_score,
+        legacy_signals=MarketSignalRepository(db_path).get_signals(sales_features.source_key),
+    )
+    if cash_value.get("resolved") and cash_value["resolved"].get("attribution_method") != "legacy_aggregate":
+        evidence.append(
+            {
+                "title": "现金价值归因",
+                "url": None,
+                "cash_value_resolved": cash_value["resolved"],
+            }
+        )
     gap = compare_score_to_sales(comparison_features, evaluation, evidence)
     return {
         "evaluation": evaluation.to_dict(),
