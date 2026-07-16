@@ -194,7 +194,7 @@ class MarketValidationSignals(BaseModel):
     video_views: int | None = None
     marketing_volume: int | None = None
     sales_volume: int | None = None
-    avg_spend_to_obtain: float | None = None
+    avg_spend_to_obtain: float | None = None  # Canonical CNY at this public interface.
     ownership_rate: float | None = None
 
     @classmethod

@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import Counter
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
 from business.sales_advisor import SalesAdvisor
+from data.cash_value import CashValueService
 from data.market_signal_repository import OFFICIAL_EVIDENCE_PLATFORMS, MarketSignalRepository
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository
 from feature_engineering.features import MarketValidationSignals
@@ -217,11 +219,20 @@ def build_payload(
     if calibration_model and sales_gap["sales_score"] is not None:
         sales_gap = apply_calibration(score_features, gap_evaluation, sales_gap, calibration_model)
 
+    cash_value = CashValueService(db_path).cash_value(
+        source_key,
+        evaluation_score=evaluation.evaluation_score,
+        legacy_signals=market_repo.get_signals(source_key),
+    )
+    sales_report = report.to_dict()
+    # Cash evidence is an auditable parallel section, never folded into the
+    # emotional score or represented as exact skin revenue.
+    sales_report["cash_value"] = cash_value
     return {
         "skin": features.to_dict(),
         "evaluation": evaluation.to_dict(),
         "score_evaluation": gap_evaluation.to_dict(),
-        "sales_report": report.to_dict(),
+        "sales_report": sales_report,
         "sales_gap": sales_gap,
         "evidence_items": evidence,
         "evidence_scope": "official_only" if official_only else "all_public_evidence",
@@ -568,6 +579,160 @@ def render_sales_tab(payload: dict[str, Any]) -> None:
     if pricing.get("official_price_text"):
         st.caption(f"官方价格文本：{pricing['official_price_text']}")
 
+    cash = report.get("cash_value") or {}
+    resolved = cash.get("resolved")
+    st.divider()
+    st.subheader("现金价值（与情绪评分分开展示）")
+    if not resolved:
+        st.info("当前期间没有持久化现金价值证据。")
+        return
+    cols = st.columns(5)
+    revenue_currency = resolved.get("revenue_currency") or "N/A"
+    cols[0].metric(f"期间收入归因 ({revenue_currency})", _display_number(resolved.get("attributed_revenue")))
+    cols[1].metric("估算件数", _display_number(resolved.get("sales_volume")))
+    cols[2].metric("平均获取成本 (CNY)", _display_number(resolved.get("avg_spend_cny")))
+    cols[3].metric("收入提升", _display_percent((cash.get("metrics") or {}).get("revenue_lift_percent")))
+    cols[4].metric("置信度", _display_number(resolved.get("confidence")))
+    st.caption(
+        f"方法：{resolved.get('attribution_method')}；成本依据：{resolved.get('spend_basis')}；"
+        f"期间：{resolved.get('period_start', 'legacy')} 至 {resolved.get('period_end', 'legacy')}"
+    )
+    efficiency = (cash.get("metrics") or {}).get("emotional_value_efficiency_per_cny100")
+    if efficiency is not None:
+        st.write(f"描述性情绪价值效率：每 ¥100 获取成本对应 `{efficiency}` 评分点；这不是货币估值。")
+    for warning in cash.get("warnings") or []:
+        st.warning(warning)
+    if cash.get("daily_chart"):
+        st.line_chart(cash["daily_chart"], x="date", y=["baseline", "observed"])
+
+
+def import_cash_value_upload(
+    db_path: Path,
+    content: bytes,
+    *,
+    currency: str = "CNY",
+    cny_per_usd: float | None = None,
+    market: str = "CN",
+    source_name: str,
+    run_attribution: bool = True,
+) -> dict[str, Any]:
+    """Testable Streamlit adapter around the shared import service."""
+    service = CashValueService(db_path)
+    imported = service.import_revenue_csv(
+        content, currency=currency, cny_per_usd=cny_per_usd,
+        market=market, source_name=source_name,
+    )
+    result: dict[str, Any] = {"import": imported}
+    if run_attribution:
+        result["attribution"] = service.attribute_releases(
+            import_batch=imported["import_batch"], cny_per_usd=cny_per_usd,
+        )
+    return result
+
+
+def save_manual_cash_value(db_path: Path, source_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Persist manual UI evidence; simulation widgets never call this helper."""
+    return CashValueService(db_path).repo.save_manual_record(source_key, payload)
+
+
+def render_cash_value_tab(db_path: Path, source_key: str, payload: dict[str, Any]) -> None:
+    st.subheader("期间现金价值证据")
+    st.caption("这里保存的证据与侧栏“手动模拟”完全分离；模拟不会写入数据库。")
+    today = date.today()
+    view_period = st.date_input(
+        "查看期间", value=(today - timedelta(days=365), today), key="cash_view_period",
+    )
+    with st.expander("导入 iPhone 收入 CSV", expanded=False):
+        uploaded = st.file_uploader("收入 CSV", type=["csv"], key="cash_revenue_csv")
+        revenue_currency = st.selectbox("流水币种", ["CNY", "USD"], key="cash_csv_currency")
+        market = st.text_input("市场", value="CN", key="cash_csv_market")
+        fx = None
+        if revenue_currency == "USD":
+            fx = st.number_input("CNY / USD", min_value=0.01, value=7.20, step=0.01, key="cash_csv_fx")
+        if st.button("导入并运行归因", disabled=uploaded is None):
+            try:
+                result = import_cash_value_upload(
+                    db_path, uploaded.getvalue(), currency=revenue_currency,
+                    cny_per_usd=fx, market=market, source_name=uploaded.name,
+                )
+                st.success(
+                    f"读取 {result['import']['rows_read']} 行；生成 "
+                    f"{result['attribution']['eligible_records']} 条符合覆盖要求的皮肤估算。"
+                )
+                st.cache_data.clear()
+            except ValueError as exc:
+                st.error(str(exc))
+
+    with st.form("manual_cash_value"):
+        st.write("持久化人工证据")
+        left, right = st.columns(2)
+        start = left.date_input("期间开始", value=today - timedelta(days=6))
+        end = right.date_input("期间结束", value=today)
+        sales_volume = st.number_input("销量（留空请保持 0 并取消下方勾选）", min_value=0, value=0, step=1)
+        include_volume = st.checkbox("保存销量字段", value=True)
+        relation = st.selectbox("销量关系", ["exact", "estimated"])
+        avg_spend = st.number_input("平均获取花费", min_value=0.0, value=0.0, step=0.1)
+        include_spend = st.checkbox("保存平均花费字段", value=True)
+        currency = st.selectbox("花费币种", ["CNY", "USD"])
+        manual_fx = st.number_input("CNY / USD（USD 时必填）", min_value=0.01, value=7.20, step=0.01)
+        confidence = st.slider("人工置信度", 0.0, 1.0, 1.0, 0.05)
+        notes = st.text_area("备注")
+        submitted = st.form_submit_button("保存人工证据")
+        if submitted:
+            try:
+                save_manual_cash_value(db_path, source_key, {
+                    "period_start": start.isoformat(), "period_end": end.isoformat(),
+                    "sales_volume": int(sales_volume) if include_volume else None,
+                    "volume_relation": relation,
+                    "avg_spend": float(avg_spend) if include_spend else None,
+                    "currency": currency, "cny_per_usd": manual_fx if currency == "USD" else None,
+                    "confidence": confidence, "notes": notes,
+                })
+                st.success("人工现金价值证据已保存。")
+                st.cache_data.clear()
+            except ValueError as exc:
+                st.error(str(exc))
+
+    if isinstance(view_period, tuple) and len(view_period) == 2:
+        view_start, view_end = view_period
+        cash = CashValueService(db_path).cash_value(
+            source_key, view_start.isoformat(), view_end.isoformat(),
+            evaluation_score=payload["evaluation"].get("evaluation_score"),
+            legacy_signals=MarketSignalRepository(db_path).get_signals(source_key),
+        )
+    else:
+        cash = payload["sales_report"].get("cash_value") or {}
+    resolved = cash.get("resolved")
+    if resolved:
+        cols = st.columns(4)
+        cols[0].metric("期间归因收入", _display_number(resolved.get("attributed_revenue")))
+        cols[1].metric("销量/估算件数", _display_number(resolved.get("sales_volume")))
+        cols[2].metric("平均花费 CNY", _display_number(resolved.get("avg_spend_cny")))
+        cols[3].metric("置信度", _display_number(resolved.get("confidence")))
+        st.caption(
+            f"{resolved.get('attribution_method')} | {resolved.get('spend_basis')} | "
+            f"{resolved.get('period_start', 'legacy')} 至 {resolved.get('period_end', 'legacy')}"
+        )
+    if cash.get("daily_chart"):
+        st.line_chart(cash["daily_chart"], x="date", y=["baseline", "observed"])
+    for warning in cash.get("warnings") or []:
+        st.warning(warning)
+    if cash.get("records"):
+        st.write("期间记录与来源")
+        st.dataframe(cash["records"], hide_index=True, use_container_width=True)
+
+
+def _display_number(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    if isinstance(value, float):
+        return f"{value:,.2f}"
+    return f"{value:,}"
+
+
+def _display_percent(value: Any) -> str:
+    return "N/A" if value is None else f"{float(value):.2f}%"
+
 
 def render_evaluation_tab(payload: dict[str, Any]) -> None:
     evaluation = payload["evaluation"]
@@ -652,7 +817,7 @@ def main() -> None:
         return
 
     render_header(payload, summary)
-    tabs = st.tabs(["工作原理", "数据审计", "评分/销量偏差", "当前证据", "销售动作", "评分结构", "游戏扩展", "JSON"])
+    tabs = st.tabs(["工作原理", "数据审计", "评分/销量偏差", "当前证据", "销售动作", "现金价值录入", "评分结构", "游戏扩展", "JSON"])
     with tabs[0]:
         render_method_tab(calibration_report)
     with tabs[1]:
@@ -664,10 +829,12 @@ def main() -> None:
     with tabs[4]:
         render_sales_tab(payload)
     with tabs[5]:
-        render_evaluation_tab(payload)
+        render_cash_value_tab(db_path, source_key, payload)
     with tabs[6]:
-        render_game_scope_tab(summary)
+        render_evaluation_tab(payload)
     with tabs[7]:
+        render_game_scope_tab(summary)
+    with tabs[8]:
         render_json_tab(payload, source_key)
 
 

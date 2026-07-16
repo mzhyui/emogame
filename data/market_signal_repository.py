@@ -238,6 +238,11 @@ class MarketSignalRepository:
             conn.commit()
 
     def get_signals(self, source_key: str) -> MarketValidationSignals:
+        """Return compatible aggregate signals with period evidence priority.
+
+        Cash-value records remain separate auditable facts; this method only
+        projects the highest-priority record onto the legacy public model.
+        """
         self.ensure_schema()
         with closing(self._connect()) as conn:
             row = conn.execute(
@@ -251,7 +256,19 @@ class MarketSignalRepository:
                 """,
                 (source_key,),
             ).fetchone()
-        return MarketValidationSignals.from_dict(dict(row) if row else {})
+        values = dict(row) if row else {}
+        # Import lazily to avoid coupling the base schema module to attribution.
+        from data.cash_value import CashValueRepository
+
+        cash_repo = CashValueRepository(self.db_path)
+        volume_record = cash_repo.resolve_field(source_key, "sales_volume")
+        spend_record = cash_repo.resolve_field(source_key, "avg_spend_cny")
+        if volume_record is not None:
+            values["sales_volume"] = volume_record["sales_volume"]
+        if spend_record is not None:
+            # Public compatibility contract: this field is canonical CNY.
+            values["avg_spend_to_obtain"] = spend_record["avg_spend_cny"]
+        return MarketValidationSignals.from_dict(values)
 
     def list_evidence(self, source_key: str, *, official_only: bool = False) -> list[dict[str, Any]]:
         self.ensure_schema()

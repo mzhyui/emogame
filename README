@@ -1,1 +1,2 @@
 - TODO 2026-06-18 git.V.ff9fc: deepseek donot have vlm. use autodl api with gpt5.4 to get the vlm.
+- TODO 2026-07-10 git.V.1d9a0: add a database initializer for cold-start

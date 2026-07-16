@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from business.sales_advisor import SalesAdvisor
+from data.cash_value import CashValueService
 from data.market_signal_repository import MarketSignalRepository
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository
 from feature_engineering.features import MarketValidationSignals
@@ -119,9 +120,16 @@ def sales_report(
 ) -> dict[str, Any]:
     features, evaluation = build_features_and_evaluation(Path(db), request)
     report = SalesAdvisor().advise(features, evaluation)
+    report_payload = report.to_dict()
+    db_signals = MarketSignalRepository(Path(db)).get_signals(features.source_key)
+    report_payload["cash_value"] = CashValueService(Path(db)).cash_value(
+        features.source_key,
+        evaluation_score=evaluation.evaluation_score,
+        legacy_signals=db_signals,
+    )
     return {
         "evaluation": evaluation.to_dict(),
-        "sales_report": report.to_dict(),
+        "sales_report": report_payload,
     }
 
 

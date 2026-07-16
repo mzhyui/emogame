@@ -56,3 +56,5 @@ build/
 
 ppt/
 weibo_comments/
+
+**__pycache__

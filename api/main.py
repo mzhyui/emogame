@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from api.routes.evaluation import router as evaluation_router
+from api.routes.cash_value import router as cash_value_router
 
 
 app = FastAPI(
@@ -20,3 +21,4 @@ def health() -> dict[str, str]:
 
 
 app.include_router(evaluation_router, prefix="/api")
+app.include_router(cash_value_router, prefix="/api")
