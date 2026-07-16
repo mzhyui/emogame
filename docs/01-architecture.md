@@ -38,24 +38,28 @@
 
 ## 分层职责
 
-| 层                 | 职责                              | 核心组件                                    | 技术栈                                      |
-| ------------------ | --------------------------------- | ------------------------------------------- | ------------------------------------------- |
-| **数据层**   | 多源数据采集、清洗、存储          | 爬虫管理器、数据管道                        | httpx, Selenium, BS4                        |
-| **模型层**   | VLM 视觉理解、特征工程、溢价回归  | VLM Pipeline、Feature Store、XGBoost        | qwen2.5vl, AutoDL GPT5.4-mini, scikit-learn |
-| **智能体层** | 多 Agent 协作、任务调度、LLM 报告 | Orchestrator、Collector、Analyzer、Reporter | LangGraph, GPT5.4-mini                      |
-| **展示层**   | Web 交互、可视化、报告导出        | Streamlit Dashboard                         | Streamlit, Plotly, ECharts                  |
+| 层                 | 职责                              | 核心组件                                    | 技术栈                                      | 状态 |
+| ------------------ | --------------------------------- | ------------------------------------------- | ------------------------------------------- | ---- |
+| **数据层**   | 多源数据采集、清洗、存储          | 爬虫管理器、数据管道                        | httpx, Selenium, BS4                        | ✅ 已实现（WZRY/Bilibili/Weibo 爬虫） |
+| **模型层**   | VLM 视觉理解、特征工程、溢价回归  | VLM Pipeline、Feature Store、规则引擎 + XGBoost、现金价值归因 | qwen2.5vl, AutoDL GPT5.4-mini, scikit-learn | ✅ 已实现（33维特征 + 规则引擎；现金价值层 MVP） |
+| **智能体层** | 多 Agent 协作、任务调度、LLM 报告 | Orchestrator、Collector、Analyzer、Reporter | LangGraph, GPT5.4-mini                      | ⬜ 规划中（尚未落地） |
+| **展示层**   | Web 交互、可视化、报告导出        | Streamlit Dashboard                         | Streamlit, Plotly, ECharts                  | ✅ 已实现（含现金价值录入 Tab） |
+
+> **实现状态说明**：当前为单进程 `Streamlit + FastAPI` 应用 + SQLite Feature Store。
+> 智能体编排层（LangGraph）、PostgreSQL、Redis 消息总线均按架构规划但**尚未实现**。
+> 现金价值（销量 / 获取成本归因）作为独立、可审计的一层，与情绪溢价评分**分开展示**，绝不并入情感分数。
 
 ## 数据流
 
 ```
 用户输入 (英雄/皮肤/游戏) 
-    → Collector Agent (多源数据采集)
+    → 数据采集 (爬虫：官方商店 / Bilibili / Weibo)
     → VLM Pipeline (皮肤图片视觉分析)
-    → Feature Pipeline (31维特征向量构建)
+    → Feature Pipeline (33维特征向量构建)
     → Ensemble Predictor (规则引擎 + XGBoost)
-    → Business Analyzer (定价/风险/竞品)
-    → Report Generator (LLM 自然语言报告)
-    → 前端渲染 (雷达图/指标卡/报告文本)
+    → Business Analyzer (定价 / 风险 / 竞品)
+    → 现金价值归因 (销量 / 获取成本，独立可审计层)
+    → 前端渲染 (雷达图 / 指标卡 / 报告文本)
 ```
 
 ## 核心设计原则
@@ -90,5 +94,11 @@
 
 ## 下一步
 
+- 智能体编排层落地（LangGraph Collector/Analyzer/Inferer/Reporter）—— 当前未实现。
+- Feature Store 由 SQLite 渐进迁移至 PostgreSQL，消息总线引入 Redis（按渐进式架构规划）。
+- 现金价值层与模型 / 校准层的衔接：当前为展示隔离，需决策是否（及如何）将归因收入反馈到 sales-gap / 评分。
+- 文档同步：保持本架构与 `feature_engineering/`（33维）、`data/cash_value.py`（现金价值层）一致。
+
 - → [02 — VLM 视觉语言模型](02-vlm-pipeline.md)
 - → [03 — 数据采集系统](03-data-crawling.md)
+- → [07 — 商业分析](07-business-analysis.md)（定价 / 风险 / 竞品，含现金价值归因）
