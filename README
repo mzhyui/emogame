@@ -1,2 +1,67 @@
-- TODO 2026-06-18 git.V.ff9fc: deepseek donot have vlm. use autodl api with gpt5.4 to get the vlm.
-- TODO 2026-07-10 git.V.1d9a0: add a database initializer for cold-start
+# EmoGame — Backlog
+
+> Prioritized, measurable backlog. Checked items have code + tests that verify
+> the stated outcome. Baseline snapshot 2026-07-17: 960 skins, 49 cash records,
+> 0 validated emotion rows, 365 revenue days.
+
+## P0 — Dashboard correctness (2026-07-17 amendment)
+
+- [x] Data Workbench runtime: no `app.evidence_table` ImportError; every tab
+      renders. (regressed by `tests/test_dashboard_pages.py::test_workbench_page_no_import_error`)
+- [x] Validated emotion-score binding through the real `RuleEngine`
+      (`validation_status == evidence_validated`, coverage ≥ 0.5). `emotion_score`
+      and `perceived_value` populated only for validated rows; insufficient
+      results stay missing in KPIs, charts, and rankings.
+- [x] Cash / emotion separation: opinion-only signal read path
+      (`MarketSignalRepository.get_opinion_signals`) never injects cash-derived
+      `sales_volume` / `avg_spend_cny` into emotional evaluation.
+      (`test_cash_not_injected_into_emotion`)
+- [x] Period-consistent cash resolution: `period_start`/`period_end` threaded
+      through overview, explorer, and detail; cash resolved within the window.
+      Reversed period rejected with a clear UI message. (`test_period_scoped_cash`)
+- [x] Native CNY included directly; USD excluded from the CNY aggregate but kept
+      visible for audit. (`test_usd_excluded_from_cny_aggregate`)
+- [x] Release events plotted visibly on the revenue timeline (not just a caption).
+- [x] Missing-last sorting (`dashboard.format.sort_missing_last`) and safe
+      empty-result explorer (no enabled fallback selector/button on zero rows).
+      (`test_explorer_zero_result_has_no_enabled_detail_button`)
+- [x] Missing/partial database fails closed: read paths never call `ensure_schema`
+      and never create files or tables. (`test_missing_db_fails_closed`,
+      `test_partial_db_no_skins_table`)
+
+## P1 — Metadata coverage
+
+> Baseline 2026-07-17. Enrichment acceptance is separate from UI binding.
+
+- [ ] Quality: 831 / 960 skins lack quality → target measurable coverage %.
+- [ ] Online date: 326 / 960 skins lack an online date.
+- [ ] Acquisition method: 834 / 960 skins lack an acquisition method.
+- [ ] Official price text: 947 / 960 skins lack official price text.
+
+## P1 — Image coverage
+
+- [ ] 154 skins have no image URL.
+- [ ] 806 primary assets are remote-only/skipped, not validated local downloads.
+- [ ] Track URL coverage, successful local download, and renderability as
+      separate completion criteria.
+
+## P1 — Emotion evidence
+
+- [ ] Collect and persist sufficient aspect evidence before enabling rankings.
+- [ ] Do not describe official priors, cash-derived fields, or insufficient
+      rule-engine results as validated emotional evidence.
+
+## P2 — Platform follow-ups
+
+- [ ] Cold-start database initializer as a separate deliverable covering every
+      required schema (skins, market signals, cash value, revenue). Read paths
+      must stay fail-closed; only this initializer creates schema.
+- [ ] AutoDL / VLM: validated endpoint + model choice (AutoDL `gpt-5.4-mini` L3,
+      `qwen2.5vl:3b` L1/L2), credential contract, smoke test, and fallback.
+
+## Fixed assumptions
+
+- Four-page layout: portfolio overview, explorer, detail, separate data workbench.
+- Cash value, perceived value-for-money, and emotional score are independent
+  measures — never fused into one "total value".
+- Never replace missing values with zero or official metadata priors.

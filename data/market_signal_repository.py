@@ -270,6 +270,34 @@ class MarketSignalRepository:
             values["avg_spend_to_obtain"] = spend_record["avg_spend_cny"]
         return MarketValidationSignals.from_dict(values)
 
+    def get_opinion_signals(self, source_key: str) -> MarketValidationSignals:
+        """Read-only-only aggregate signals, never projecting cash-value fields.
+
+        Used by the dashboard's emotional evaluation so a cash-derived
+        ``sales_volume`` / ``avg_spend_cny`` can never be injected into the
+        RuleEngine emotional score. This path does NOT call ``ensure_schema``
+        and must fail closed (empty signals) when the table is missing, so a
+        partial database is never silently created from a read.
+        """
+        try:
+            with closing(self._connect()) as conn:
+                row = conn.execute(
+                    """
+                    SELECT visual_score, feel_score, craftsmanship_score, collection_score,
+                           value_score, purchase_intent_score, sentiment_score,
+                           discussion_count, video_views, marketing_volume, sales_volume,
+                           avg_spend_to_obtain, ownership_rate
+                    FROM market_signal_records
+                    WHERE source_key = ?
+                    """,
+                    (source_key,),
+                ).fetchone()
+        except sqlite3.OperationalError:
+            return MarketValidationSignals()
+        if row is None:
+            return MarketValidationSignals()
+        return MarketValidationSignals.from_dict(dict(row))
+
     def list_evidence(self, source_key: str, *, official_only: bool = False) -> list[dict[str, Any]]:
         self.ensure_schema()
         where = ["source_key = ?"]

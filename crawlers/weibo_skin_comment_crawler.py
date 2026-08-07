@@ -35,6 +35,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 import sys
@@ -67,7 +68,7 @@ DEFAULT_USER_AGENT = (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SECRET_PATH = PROJECT_ROOT / "weiboSpider" / ".secret"
+ENV_PATH = PROJECT_ROOT / ".env"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "weibo_comments"
 HERO_SKIN_DB = PROJECT_ROOT / "data" / "wzry_skins" / "skins.sqlite3"
 
@@ -136,16 +137,35 @@ class CrawlEntry:
 # cookie loading
 # ---------------------------------------------------------------------------
 
+def _load_env() -> None:
+    """Best-effort load of project .env into os.environ (no extra deps)."""
+    if not ENV_PATH.exists():
+        return
+    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        # Do not clobber variables already present in the environment
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def load_cookie() -> str:
-    """Read the Weibo cookie from weiboSpider/.secret."""
-    if not SECRET_PATH.exists():
-        raise FileNotFoundError(
-            f"Cookie file not found at {SECRET_PATH}. "
-            "Place a valid Weibo cookie in weiboSpider/.secret"
-        )
-    cookie = SECRET_PATH.read_text().strip()
+    """Read the Weibo cookie from the WEIBO_COOKIE env var (loaded from .env).
+
+    The cookie is no longer read from weiboSpider/.secret; the single source
+    of truth is the WEIBO_COOKIE variable defined in .env (see .env.example).
+    """
+    _load_env()
+    cookie = (os.environ.get("WEIBO_COOKIE") or "").strip()
     if not cookie:
-        raise ValueError(f"{SECRET_PATH} is empty — add a valid Weibo cookie")
+        raise ValueError(
+            "WEIBO_COOKIE is not set. Add a valid Weibo cookie to the "
+            "WEIBO_COOKIE variable in .env (see .env.example and "
+            "weiboSpider/.secret.example for how to obtain one)."
+        )
     return cookie
 
 
@@ -236,7 +256,7 @@ class WeiboClient:
                         "access-control/anti-crawler rejection of the timeline "
                         "endpoint, not a transient server error. Verify the same "
                         "request in a logged-in browser and refresh "
-                        "weiboSpider/.secret if the browser succeeds. If it is "
+                        "WEIBO_COOKIE in .env if the browser succeeds. If it is "
                         "also blocked there, wait or use --mids; post-detail and "
                         "long-text retrieval use separate endpoints."
                     )
@@ -322,12 +342,16 @@ async def fetch_official_posts(
     page = 1
 
     while len(posts) < max_posts:
-        data = await client._request(CONTAINER_URL, params={
-            "type": "uid",
-            "value": WZRY_UID,
-            "containerid": WZRY_CONTAINERID,
-            "page": page,
-        })
+        try:
+            data = await client._request(CONTAINER_URL, params={
+                "type": "uid",
+                "value": WZRY_UID,
+                "containerid": WZRY_CONTAINERID,
+                "page": page,
+            })
+        except Exception as exc:
+            logger.warning("Official timeline page %d failed (%s); stopping discovery", page, exc)
+            break
         cards = data.get("data", {}).get("cards", [])
         if not cards:
             break
@@ -811,6 +835,11 @@ def format_output(results: list[CrawlEntry]) -> list[dict]:
 # CLI
 # ---------------------------------------------------------------------------
 
+def _now_iso() -> str:
+    """Local timestamp for crawl attribution (avoids Date.now in scripts)."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Hero Skin Weibo Comment Crawler — fetch WZRY skin comments",
@@ -847,6 +876,8 @@ def parse_args() -> argparse.Namespace:
                    help="Output JSON file path (default: auto-dated in data/weibo_comments/)")
     o.add_argument("--quiet", "-q", action="store_true",
                    help="Suppress progress output")
+    o.add_argument("--no-db", action="store_true",
+                   help="Skip writing results to the Weibo SQLite store")
 
     return p.parse_args()
 
@@ -886,7 +917,7 @@ async def main() -> None:
         print(f"Error: {e}", file=sys.stderr)
         if not isinstance(e, WeiboAccessBlocked):
             print(
-                "Place a valid Weibo cookie in weiboSpider/.secret (see weiboSpider/.secret.example for format).\n"
+                "Place a valid Weibo cookie in WEIBO_COOKIE (see weiboSpider/.secret.example for format).\n"
                 "To obtain a cookie: log in to https://m.weibo.cn in a browser, then copy the Cookie header\n"
                 "from any API request in the Network tab of DevTools.",
                 file=sys.stderr,
@@ -903,6 +934,17 @@ async def main() -> None:
         json.dumps(formatted, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+    # ── SQLite store ──
+    if not args.no_db:
+        try:
+            from crawlers.weibo_store import store_crawl, DEFAULT_WEIBO_DB
+        except ImportError:
+            from weibo_store import store_crawl, DEFAULT_WEIBO_DB
+
+        stored = store_crawl(results, _now_iso())
+        print(f"Stored:  {stored['posts']} posts, {stored['comments']} comments → "
+              f"{DEFAULT_WEIBO_DB.name}")
 
     # ── Summary ──
     total_comments = sum(r.meaningful for r in results)
