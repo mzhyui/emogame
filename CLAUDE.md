@@ -84,4 +84,5 @@ source .venv/bin/activate
 - ✅ Weibo 社交评论采集入口已接入
 - ✅ VLM Phase 1 默认配置：`qwen2.5vl:3b` L1/L2 + AutoDL `gpt-5.4-mini` L3
 - ✅ SQLite Feature Store CRUD 与基础 Streamlit 皮肤浏览已实现
+- ✅ 合成发票数据工作流：`scripts/synthesize_invoices.py`（7 天–6 个月窗口、逐皮肤×逐日、与真实 iPhone 收入对账、seed 可复现）
 - ⬜ 下一步：Phase 2 特征工程，完成 33 维特征向量与批量 VLM 联调
