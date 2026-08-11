@@ -65,3 +65,7 @@
 - Cash value, perceived value-for-money, and emotional score are independent
   measures — never fused into one "total value".
 - Never replace missing values with zero or official metadata priors.
+
+
+## TODO
+- TODO 2026-08-07 git.V.44214: separate data utils and data assets

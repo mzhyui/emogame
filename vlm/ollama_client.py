@@ -161,3 +161,112 @@ class OllamaClient:
             result["parsed_json"] = parsed
 
         return result
+
+    # ── text-only chat (for synthesis, no images) ──
+
+    async def chat_text(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str = "",
+        timeout: int | None = None,
+        temperature: float = 0.8,
+        num_predict: int = 200,
+    ) -> dict[str, Any]:
+        """Send a text-only chat request to Ollama (no images).
+
+        Used for text generation tasks like synthetic comment synthesis.
+        Returns a dict with keys ``model``, ``elapsed_seconds``, ``content``,
+        and (when the response is parseable JSON) ``parsed_json``.
+        """
+        timeout = timeout or self.settings.weibo_synth_timeout
+        started = time.perf_counter()
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model,
+            "stream": False,
+            "messages": messages,
+            "options": {
+                "temperature": temperature,
+                "num_predict": num_predict,
+            },
+        }
+
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            resp = await client.post(
+                f"{self.host}/api/chat",
+                json=payload,
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        content = data.get("message", {}).get("content", "").strip()
+        result: dict[str, Any] = {
+            "model": model,
+            "elapsed_seconds": round(time.perf_counter() - started, 2),
+            "content": content,
+        }
+
+        parsed = parse_jsonish(content)
+        if parsed is not None:
+            result["parsed_json"] = parsed
+
+        return result
+
+    def chat_text_sync(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str = "",
+        timeout: int | None = None,
+        temperature: float = 0.8,
+        num_predict: int = 200,
+    ) -> dict[str, Any]:
+        """Synchronous wrapper for ``chat_text``."""
+        timeout = timeout or self.settings.weibo_synth_timeout
+        started = time.perf_counter()
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model,
+            "stream": False,
+            "messages": messages,
+            "options": {
+                "temperature": temperature,
+                "num_predict": num_predict,
+            },
+        }
+
+        resp = httpx.post(
+            f"{self.host}/api/chat",
+            json=payload,
+            timeout=timeout,
+            **self._client_kwargs(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        content = data.get("message", {}).get("content", "").strip()
+        result: dict[str, Any] = {
+            "model": model,
+            "elapsed_seconds": round(time.perf_counter() - started, 2),
+            "content": content,
+        }
+
+        parsed = parse_jsonish(content)
+        if parsed is not None:
+            result["parsed_json"] = parsed
+
+        return result

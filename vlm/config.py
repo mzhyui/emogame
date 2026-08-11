@@ -26,6 +26,11 @@ class VLMSettings(BaseSettings):
     l3_model: str = "gpt-5.4-mini"
     expert_model: str = "qwen3-vl-plus"  # LLM-as-expert labeler (run_expert_labeling)
 
+    # ── Weibo comment synthesis (text-only generation) ──
+    # Note: qwen2.5vl:3b works better for text-only than qwen3.5 models (which are thinking models)
+    weibo_synth_model: str = "qwen2.5vl:3b"
+    weibo_synth_timeout: int = 120
+
     # ── Cache ──
     cache_ttl_days: int = 30
     cache_dir: str = "data/vlm_cache"
