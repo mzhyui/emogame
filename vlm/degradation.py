@@ -15,9 +15,10 @@ from loguru import logger
 
 from vlm.config import get_settings
 from vlm.ollama_client import OllamaClient
+from vlm.output_validation import LocalOutputValidationError, validate_l2_payload
 from vlm.preprocess import PreprocessResult
 from vlm.prompts import L2_PROMPT, L3_USER_PROMPT_TEMPLATE
-from vlm.schemas import L2Output, L3Output
+from vlm.schemas import L3Output
 from vlm.utils import encode_image, parse_jsonish
 
 
@@ -63,15 +64,17 @@ class DegradationHandler:
         l1_ok = self.settings.l1_model in installed
         l2_ok = self.settings.l2_model in installed
         l1_fallback_ok = self.settings.l1_fallback_model in installed
+        l2_fallback_ok = self.settings.l2_fallback_model in installed
 
         # A fallback model makes L1 "effectively ok" for tier purposes
         l1_effective = l1_ok or l1_fallback_ok
+        l2_effective = l2_ok or l2_fallback_ok
 
-        if l1_effective and l2_ok:
+        if l1_effective and l2_effective:
             self._cached_tier = PipelineTier.FULL
-        elif l1_effective and not l2_ok:
+        elif l1_effective and not l2_effective:
             self._cached_tier = PipelineTier.DEGRADED_API_L2
-        elif not l1_effective and l2_ok:
+        elif not l1_effective and l2_effective:
             self._cached_tier = PipelineTier.DEGRADED_CV_L1
         else:
             # Neither L1 nor L2 available — everything via API
@@ -167,39 +170,6 @@ Additionally, after the aesthetic scoring, provide semantic analysis:
 Output a single JSON object with BOTH the 8 L2 scoring dimensions (as top-level keys) AND the L3 semantic fields (also as top-level keys).
 """
 
-        try:
-            response = await api_client.chat.completions.create(
-                model=self.settings.l3_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "你是游戏美术与文化分析专家。输出严格 JSON 格式。",
-                    },
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": combined_prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_b64}"
-                                },
-                            },
-                        ],
-                    },
-                ],
-                temperature=0.0,
-                max_tokens=1500,
-                timeout=self.settings.l3_timeout,
-            )
-            content = response.choices[0].message.content or ""
-        except Exception as exc:
-            logger.error(f"Combined L2+L3 via AutoDL failed: {exc}")
-            return {"_source": "error", "_error": str(exc)}
-
-        parsed = parse_jsonish(content) or {}
-
-        # Validate as much as we can
         l2_fields = {
             "model_detail",
             "effect_quality",
@@ -210,17 +180,93 @@ Output a single JSON object with BOTH the 8 L2 scoring dimensions (as top-level 
             "background_quality",
             "ui_elements",
         }
-        l2_part = {k: v for k, v in parsed.items() if k in l2_fields}
-        l3_part = {k: v for k, v in parsed.items() if k not in l2_fields}
+        attempts: list[dict[str, Any]] = []
+        last_error: dict[str, Any] = {
+            "_source": "error",
+            "_error": "remote_combined_not_attempted",
+        }
+        for attempt_number in range(1, 4):
+            try:
+                response = await api_client.chat.completions.create(
+                    model=self.settings.l3_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "你是游戏美术与文化分析专家。输出严格 JSON 格式。",
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": combined_prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{image_b64}"
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                    temperature=0.0,
+                    max_tokens=1500,
+                    timeout=self.settings.l3_timeout,
+                )
+                content = response.choices[0].message.content or ""
+            except Exception as exc:
+                logger.error("Combined L2+L3 attempt {} failed: {}", attempt_number, exc)
+                attempts.append(
+                    {
+                        "model": self.settings.l3_model,
+                        "status": "error",
+                        "source": "remote_fallback",
+                        "reason": type(exc).__name__,
+                    }
+                )
+                last_error = {"_source": "error", "_error": str(exc)}
+                continue
 
-        try:
-            l2_validated = L2Output(**l2_part).model_dump() if l2_part else {}
-        except Exception:
-            l2_validated = l2_part
-        try:
-            l3_validated = L3Output(**l3_part).model_dump() if l3_part else {}
-        except Exception:
-            l3_validated = l3_part
+            parsed = parse_jsonish(content) or {}
+            l2_part = {k: v for k, v in parsed.items() if k in l2_fields}
+            l3_part = {k: v for k, v in parsed.items() if k not in l2_fields}
+            try:
+                l2_validated = validate_l2_payload(l2_part)
+            except LocalOutputValidationError as exc:
+                logger.warning(
+                    "Combined L2+L3 attempt {} rejected: {}",
+                    attempt_number,
+                    exc.reason,
+                )
+                attempts.append(
+                    {
+                        "model": self.settings.l3_model,
+                        "status": "invalid",
+                        "source": "remote_fallback",
+                        "reason": exc.reason,
+                    }
+                )
+                last_error = {
+                    "_source": "error",
+                    "_error": "invalid_remote_combined_output",
+                    "_diagnostic": {"reason": exc.reason, **exc.diagnostic},
+                }
+                continue
 
-        combined = {**l2_validated, **l3_validated, "_source": "autodl_combined"}
-        return combined
+            try:
+                l3_validated = L3Output(**l3_part).model_dump() if l3_part else {}
+            except Exception:
+                l3_validated = l3_part
+            attempts.append(
+                {
+                    "model": self.settings.l3_model,
+                    "status": "accepted",
+                    "source": "remote_fallback",
+                }
+            )
+            return {
+                **l2_validated,
+                **l3_validated,
+                "_source": "autodl_combined",
+                "_attempts": attempts,
+            }
+
+        return {**last_error, "_attempts": attempts}

@@ -1,0 +1,212 @@
+2026-07-16 15:34:54,417 - downloader.py - INFO - 即将进行图片下载
+2026-07-16 15:34:54,425 - downloader.py - INFO - 图片下载完毕,保存路径:
+2026-07-16 15:34:54,426 - downloader.py - INFO - tests/tmp_downloader
+2026-07-16 15:34:54,431 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:34:54,529 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:34:54,530 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:01,530 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:09,531 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:16,532 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:25,533 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:31,535 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:38,536 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:48,537 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:35:54,538 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:03,539 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,550 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,551 - index_parser.py - ERROR - 'NoneType' object has no attribute 'xpath'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/index_parser.py", line 70, in get_page_num
+    if self.selector.xpath("//input[@name='mp']") == []:
+       ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'xpath'
+2026-07-16 15:36:11,559 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,560 - info_parser.py - ERROR - 'NoneType' object has no attribute 'xpath'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/info_parser.py", line 21, in extract_user_info
+    nickname = self.selector.xpath('//title/text()')[0]
+               ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'xpath'
+2026-07-16 15:36:11,570 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,581 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,582 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,583 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,583 - page_parser.py - ERROR - 'NoneType' object has no attribute 'xpath'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/page_parser.py", line 72, in get_one_page
+    info = self.selector.xpath("//div[@class='c']")
+           ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'xpath'
+2026-07-16 15:36:11,593 - util.py - ERROR - [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+Traceback (most recent call last):
+  File "/home/mzhyui/git/emogame/weiboSpider/weibo_spider/parser/util.py", line 55, in handle_html
+    resp = requests.get(url, headers=headers)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/mzhyui/git/emogame/weiboSpider/tests/test_parser/util.py", line 9, in mock_request_get_content
+    with open(os.path.join(TEST_DATA_DIR, URL_MAP_FILE)) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'tests/testdata/url_map.json'
+2026-07-16 15:36:11,785 - config_util.py - WARNING - end_date值应为yyyy-mm-dd形式或"now",请重新输入
+2026-07-16 15:36:11,792 - config_util.py - WARNING - 2值应为0或1,请重新输入
+2026-07-16 15:36:11,796 - config_util.py - WARNING - global_wait参数内的值应为长度为2的list类型,请重新输入
+2026-07-16 15:36:11,799 - config_util.py - WARNING - global_wait列表中的值应为大于0的整数,请重新输入
+2026-07-16 15:36:11,803 - config_util.py - WARNING - global_wait参数值应为list类型,请重新输入
+2026-07-16 15:36:11,806 - config_util.py - WARNING - global_wait参数内的list长度应为2,请重新输入
+2026-07-16 15:36:11,810 - config_util.py - WARNING - global_wait列表中的值应为大于0的整数,请重新输入
+2026-07-16 15:36:11,825 - config_util.py - WARNING - -1值应为0或1,请重新输入
+2026-07-16 15:36:11,829 - config_util.py - WARNING - random_wait_pages列表中的值应为整数类型,请重新输入
+2026-07-16 15:36:11,833 - config_util.py - WARNING - random_wait_pages参数值应为list类型,请重新输入
+2026-07-16 15:36:11,836 - config_util.py - WARNING - random_wait_pages列表中的值应大于0,请重新输入
+2026-07-16 15:36:11,840 - config_util.py - WARNING - random_wait_seconds列表中的值应为整数类型,请重新输入
+2026-07-16 15:36:11,844 - config_util.py - WARNING - random_wait_seconds参数值应为list类型,请重新输入
+2026-07-16 15:36:11,847 - config_util.py - WARNING - random_wait_seconds列表中的值应大于0,请重新输入
+2026-07-16 15:36:11,856 - config_util.py - WARNING - since_date值应为yyyy-mm-dd形式或整数,请重新输入
+2026-07-16 15:36:11,862 - config_util.py - WARNING - 不存在/nonexistent/path.txt文件
+2026-07-16 15:36:11,871 - config_util.py - WARNING - 3值应为0或1,请重新输入
+2026-07-16 15:36:11,878 - config_util.py - WARNING - xml为无效模式，请从txt、csv、json、post、mongo、sqlite, kafka和mysql中挑选一个或多个作为write_mode
+2026-07-16 15:36:11,881 - config_util.py - WARNING - write_mode值应为list类型
+2026-07-16 15:36:11,894 - util.py - WARNING - string to int, the input string is empty!

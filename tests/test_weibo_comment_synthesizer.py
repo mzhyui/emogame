@@ -12,6 +12,7 @@ from data.weibo_comment_synthesizer import (
     SyntheticWeiboRepository,
     WeiboCommentSynthesizer,
     SkinCommentProfile,
+    make_synth_batch_id,
 )
 
 
@@ -158,6 +159,56 @@ def test_repository_uniqueness(test_db: Path) -> None:
     comments = repo.comments("test-dup")
     assert len(comments) == 1
     assert comments[0]["text"] == "unique text"
+
+
+def test_atomic_generation_preserves_inserted_count_and_rejects_batch_id_reuse(
+    test_db: Path,
+) -> None:
+    repo = SyntheticWeiboRepository(test_db)
+    batch = {
+        "synth_batch": "atomic-batch",
+        "seed": 42,
+        "model": "test",
+        "generator_version": "test",
+        "prompt_version": "v1",
+        "params_json": "{}",
+        "skin_count": 1,
+        "per_skin": 2,
+        "row_count": 999,
+        "rejection_count": 0,
+        "cache_hits": 0,
+        "cache_misses": 999,
+        "elapsed_seconds": 1.0,
+        "created_at": time.time(),
+    }
+    rows = [
+        {
+            "skin_key": "0097-56406", "text": "first generated comment",
+            "text_hash": "same", "temperature": 0.8, "cached": 0,
+            "attempt": 1, "created_at": time.time(),
+        },
+        {
+            "skin_key": "0097-56406", "text": "duplicate generated comment",
+            "text_hash": "same", "temperature": 0.8, "cached": 0,
+            "attempt": 1, "created_at": time.time(),
+        },
+    ]
+
+    assert repo.save_generation(batch, rows) == 1
+    loaded = repo.get_batch("atomic-batch")
+    assert loaded is not None
+    assert loaded["row_count"] == 1
+    assert loaded["cache_misses"] == 1
+    with pytest.raises(sqlite3.IntegrityError):
+        repo.save_generation(batch, rows)
+    assert len(repo.comments("atomic-batch")) == 1
+
+
+def test_batch_ids_are_unique_per_invocation() -> None:
+    first = make_synth_batch_id(20260827)
+    second = make_synth_batch_id(20260827)
+    assert first.startswith("synth-wc-20260827-")
+    assert first != second
 
 
 def test_list_batches(test_db: Path) -> None:

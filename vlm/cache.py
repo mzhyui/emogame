@@ -1,8 +1,9 @@
 """SQLite-based result cache for the VLM pipeline.
 
 Caches L1 / L2 / L3 results keyed by ``(image_path_hash, level)`` with a
-configurable TTL (default 30 days).  Content-hash change detection
-automatically invalidates entries when the underlying image file changes.
+configurable TTL (default 30 days). Content and producer-signature checks
+invalidate entries when the image, model, prompt, schema, or upstream input
+changes.
 
 Uses Python's stdlib ``sqlite3`` — no extra dependencies.
 """
@@ -40,9 +41,17 @@ class CacheManager:
                     content_hash TEXT,              -- SHA-256 of image bytes
                     result      TEXT    NOT NULL,   -- JSON string
                     created_at  REAL    NOT NULL,   -- Unix timestamp
+                    producer_signature TEXT,        -- model/prompt/schema binding
                     PRIMARY KEY (cache_key, level)
                 )
             """)
+            columns = {
+                str(row[1]) for row in conn.execute("PRAGMA table_info(vlm_cache)")
+            }
+            if "producer_signature" not in columns:
+                conn.execute(
+                    "ALTER TABLE vlm_cache ADD COLUMN producer_signature TEXT"
+                )
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_created
                 ON vlm_cache(created_at)
@@ -65,17 +74,22 @@ class CacheManager:
     # ── public API ──
 
     def get(
-        self, image_path: Path, level: str, content_hash: str | None = None
+        self,
+        image_path: Path,
+        level: str,
+        content_hash: str | None = None,
+        producer_signature: str | None = None,
     ) -> dict | None:
         """Retrieve a cached result.
 
         Returns ``None`` when the entry is missing, expired, or the image
-        content has changed since it was cached.
+        content has changed since it was cached. When ``producer_signature``
+        is supplied, legacy unsigned rows and mismatched producers fail closed.
         """
         cache_key = image_path_hash(image_path)
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT result, created_at, content_hash "
+                "SELECT result, created_at, content_hash, producer_signature "
                 "FROM vlm_cache WHERE cache_key = ? AND level = ?",
                 (cache_key, level),
             ).fetchone()
@@ -83,7 +97,7 @@ class CacheManager:
         if row is None:
             return None
 
-        result_str, created_at, stored_hash = row
+        result_str, created_at, stored_hash, stored_signature = row
 
         if self._is_expired(created_at):
             self._delete(cache_key, level)
@@ -93,7 +107,25 @@ class CacheManager:
             self._delete(cache_key, level)
             return None
 
-        return json.loads(result_str)
+        if producer_signature is not None and stored_signature != producer_signature:
+            # A different configured producer may be checked next (for example,
+            # a validated fallback model). Leave the signed row available for
+            # that exact lookup; a newly accepted result will overwrite it.
+            return None
+
+        try:
+            result = json.loads(result_str)
+        except json.JSONDecodeError:
+            self._delete(cache_key, level)
+            return None
+        if not isinstance(result, dict):
+            self._delete(cache_key, level)
+            return None
+        provenance = result.get("_provenance")
+        if isinstance(provenance, dict):
+            provenance["retrieval_source"] = "cache"
+            provenance["cache_created_at"] = float(created_at)
+        return result
 
     def set(
         self,
@@ -101,20 +133,22 @@ class CacheManager:
         level: str,
         result: dict,
         content_hash: str | None = None,
+        producer_signature: str | None = None,
     ) -> None:
         """Store a result in the cache (upsert)."""
         cache_key = image_path_hash(image_path)
         with self._get_conn() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO vlm_cache "
-                "(cache_key, level, content_hash, result, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "(cache_key, level, content_hash, result, created_at, producer_signature) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     cache_key,
                     level,
                     content_hash,
                     json.dumps(result, ensure_ascii=False),
                     time.time(),
+                    producer_signature,
                 ),
             )
             conn.commit()
@@ -127,6 +161,10 @@ class CacheManager:
                 "DELETE FROM vlm_cache WHERE cache_key = ?", (cache_key,)
             )
             conn.commit()
+
+    def invalidate_level(self, image_path: Path, level: str) -> None:
+        """Remove one tier's cached result for an image."""
+        self._delete(image_path_hash(image_path), level)
 
     def cleanup(self) -> int:
         """Purge all expired entries.  Returns the count of removed rows."""

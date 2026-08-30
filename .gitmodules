@@ -7,3 +7,6 @@
 [submodule "weiboSpider"]
 	path = weiboSpider
 	url = git@github.com:mzhyui/weiboSpider.git
+[submodule "agent-lightning"]
+	path = agent-lightning
+	url = https://github.com/microsoft/agent-lightning.git

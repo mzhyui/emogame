@@ -33,6 +33,45 @@ from vlm.schemas import VLMFeatureVector
 from vlm.utils import image_content_hash
 
 
+def tier_diagnostics(**tier_results: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Keep structured tier failures in the public result without raw replies."""
+    diagnostics: dict[str, dict[str, Any]] = {}
+    for tier, result in tier_results.items():
+        if result.get("_error") or result.get("_diagnostic"):
+            diagnostics[tier] = {
+                key: result[key]
+                for key in ("_source", "_error", "_diagnostic")
+                if key in result
+            }
+    return diagnostics
+
+
+def collect_tier_provenance(
+    **tier_results: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Expose non-secret model, prompt, cache, and producer lineage by tier."""
+    provenance: dict[str, dict[str, Any]] = {}
+    for tier, result in tier_results.items():
+        value = result.get("_provenance")
+        if isinstance(value, dict):
+            provenance[tier] = dict(value)
+    return provenance
+
+
+def recovered_with_local_fallback(result: dict[str, Any]) -> bool:
+    """Return whether a local tier rejected one model before accepting another."""
+    provenance = result.get("_provenance", {})
+    attempts = provenance.get("attempts", []) if isinstance(provenance, dict) else []
+    return isinstance(attempts, list) and any(
+        isinstance(attempt, dict)
+        and attempt.get("status") in ("invalid", "error")
+        for attempt in attempts
+    ) and any(
+        isinstance(attempt, dict) and attempt.get("status") == "accepted"
+        for attempt in attempts
+    )
+
+
 class VlmPipeline:
     """Orchestrates the 3-tier VLM analysis pipeline for a single skin image.
 
@@ -88,14 +127,19 @@ class VlmPipeline:
         _, preprocess_result = self.preprocessor.process(image_path)
 
         # ── L1: Classification ──
-        l1_cache_hit = self.cache.get(image_path, "l1", content_hash) is not None
+        l1_cache_available = self.cache.get(image_path, "l1", content_hash) is not None
         l1_result = await self.l1.classify(image_path, preprocess_result)
+        l1_cache_hit = l1_cache_available and l1_result.get("_source") == "cache"
         logger.debug(f"L1 complete: source={l1_result.get('_source')}")
 
         # ── L2: Aesthetic Analysis ──
-        l2_cache_hit = self.cache.get(image_path, "l2", content_hash) is not None
+        l2_cache_available = self.cache.get(image_path, "l2", content_hash) is not None
         l2_result = await self.l2.analyze(image_path)
-        needs_l2_fallback = l2_result.get("_source") == "deferred_to_l3"
+        l2_cache_hit = l2_cache_available and l2_result.get("_source") == "cache"
+        local_l2_result = l2_result
+        needs_l2_fallback = l2_result.get("_source") == "deferred_to_l3" or (
+            mode == ExecutionMode.FULL and l2_result.get("_source") == "error"
+        )
         logger.debug(f"L2 complete: source={l2_result.get('_source')}")
 
         # ── L3: Semantic Analysis ──
@@ -104,7 +148,7 @@ class VlmPipeline:
         if mode == ExecutionMode.L1_L2:
             logger.debug("L3 skipped (mode=l1_l2)")
         else:
-            l3_cache_hit = (
+            l3_cache_available = (
                 self.cache.get(
                     image_path,
                     "l3_combined" if needs_l2_fallback else "l3",
@@ -118,6 +162,7 @@ class VlmPipeline:
                 l2_result if not needs_l2_fallback else None,
                 needs_l2_fallback=needs_l2_fallback,
             )
+            l3_cache_hit = l3_cache_available and l3_result.get("_source") == "cache"
             logger.debug(f"L3 complete: source={l3_result.get('_source')}")
 
         # ── Extract L2 scores from combined response if deferred ──
@@ -137,6 +182,26 @@ class VlmPipeline:
             }
             l2_result = {k: v for k, v in l3_result.items() if k in l2_fields}
             l2_result["_source"] = "autodl_fallback"
+            combined_provenance = l3_result.get("_provenance")
+            if isinstance(combined_provenance, dict):
+                local_provenance = local_l2_result.get("_provenance", {})
+                local_attempts = (
+                    local_provenance.get("attempts", [])
+                    if isinstance(local_provenance, dict)
+                    else []
+                )
+                remote_attempts = combined_provenance.get("attempts", [])
+                if not isinstance(remote_attempts, list):
+                    remote_attempts = []
+                l2_result["_provenance"] = {
+                    **combined_provenance,
+                    "tier": "l2",
+                    "producer_source": "autodl_fallback",
+                    "attempts": [
+                        *local_attempts,
+                        *remote_attempts,
+                    ],
+                }
 
         # ── Determine pipeline status ──
         status = "ok"
@@ -145,6 +210,8 @@ class VlmPipeline:
             or l2_result.get("_source", "")
             in ("autodl_fallback", "deferred_to_l3")
             or l3_result.get("_source", "") == "autodl_combined"
+            or recovered_with_local_fallback(l1_result)
+            or recovered_with_local_fallback(l2_result)
         ):
             status = "degraded"
         if (
@@ -199,6 +266,12 @@ class VlmPipeline:
             cache_hit_l2=l2_cache_hit,
             cache_hit_l3=l3_cache_hit,
             execution_mode=mode.value,
+            tier_diagnostics=tier_diagnostics(
+                l1=l1_result, l2=local_l2_result, l3=l3_result
+            ),
+            tier_provenance=collect_tier_provenance(
+                l1=l1_result, l2=l2_result, l3=l3_result
+            ),
         )
 
         logger.info(

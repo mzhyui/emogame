@@ -17,6 +17,7 @@ data/*.json
 !data/migrations/
 data/wzry_skins/*
 !data/wzry_skins/.gitkeep
+data/premium_pilot/
 
 # Models (large files)
 models/*.pkl
@@ -53,6 +54,15 @@ outputs/
 dist/
 build/
 *.egg-info/
+
+# npm cache used by local npx tools
+.npm-cache/
+.dsh-tools/bin
+.dsh-tools/chromeprofile
+.dsh-tools/dl
+.dsh-tools/fxprofile
+.dsh-npm-cache
+.pytest_cache
 
 ppt/
 weibo_comments/

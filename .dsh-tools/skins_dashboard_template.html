@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WZRY 皮肤库 — 数据看板</title>
+  <link rel="stylesheet" href="/api/worktable/template/dshell.css" />
+  <style>
+    /* 仅看板需要的少量自造样式；配色走 dshell 主题变量 */
+    .tab-panel { display:none; }
+    .tab-panel.on { display:block; }
+    .toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    .toolbar .spacer { flex:1; }
+    .pager { display:flex; align-items:center; gap:6px; font-size:12px; color: var(--dsw-alias-label-secondary,#9aa4b2); }
+    .pager button { min-width:28px; padding:3px 10px; }
+    .table-wrap { border:1px solid var(--dsw-alias-border-l1,#262b36); border-radius:8px; overflow:auto; max-height:56vh; }
+    .dshell-table { font-size:12px; }
+    .dshell-table th { position:sticky; top:0; background: var(--dsw-alias-bg-base,#0b0e14); z-index:1; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; font-size:11.5px; }
+    .num { text-align:right; font-variant-numeric: tabular-nums; }
+    .chip { display:inline-block; padding:1px 9px; border-radius:999px; font-size:11px; border:1px solid var(--dsw-alias-border-l1,#262b36); color: var(--dsw-alias-label-secondary,#9aa4b2); white-space:nowrap; }
+    .chip-ok { color:#3fb950; border-color:rgba(63,185,80,.4); }
+    .chip-warn { color:#d29922; border-color:rgba(210,153,34,.4); }
+    .chip-gold { color:#f5a623; border-color:rgba(245,166,35,.45); }
+    .chip-purple { color:#b57bff; border-color:rgba(181,123,255,.45); }
+    .chip-blue { color:#4f8ef7; border-color:rgba(79,142,247,.45); }
+    .chip-red { color:#f85149; border-color:rgba(248,81,73,.45); }
+    .kv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+    .kv-cell { padding:8px 12px; border:1px solid var(--dsw-alias-border-l1,#262b36); border-radius:8px; background: var(--dsw-alias-fill-l1,rgba(255,255,255,.02)); }
+    .kv-cell .k { font-size:11px; color: var(--dsw-alias-label-secondary,#9aa4b2); }
+    .kv-cell .v { font-size:13px; font-weight:600; color: var(--dsw-alias-label-primary,#e6e8eb); margin-top:2px; }
+    .empty-hint { color: var(--dsw-alias-label-tertiary,#6b7280); font-size:12px; padding:18px; text-align:center; }
+    .chart-wrap { border:1px solid var(--dsw-alias-border-l1,#262b36); border-radius:8px; padding:10px 12px; margin-bottom:10px; background: var(--dsw-alias-fill-l1,rgba(255,255,255,.02)); }
+    .chart-wrap svg { width:100%; height:auto; display:block; }
+    .note { font-size:11.5px; color: var(--dsw-alias-label-tertiary,#6b7280); }
+  </style>
+</head>
+<body>
+  <div class="dshell">
+    <h1 class="dshell-title">WZRY 皮肤库 — 数据看板</h1>
+    <p class="dshell-sub">skins.sqlite3 · <code>/home/mzhyui/git/emogame/data/wzry_skins/</code> · 快照生成于 <span id="snap-time">__SNAP_TIME__</span>（数据有更新时告诉我，我重新生成即可）</p>
+
+    <div class="dshell-tabs" id="tabs">
+      <button class="dshell-tab dshell-tabOn" data-tab="overview">概览</button>
+      <button class="dshell-tab" data-tab="skins">皮肤 __SKINS__</button>
+      <button class="dshell-tab" data-tab="heroes">英雄 __HEROES__</button>
+      <button class="dshell-tab" data-tab="revenue">收入 __REV__</button>
+      <button class="dshell-tab" data-tab="values">价值 __VALUES__</button>
+      <button class="dshell-tab" data-tab="assets">资产</button>
+    </div>
+
+    <!-- 概览 -->
+    <div class="tab-panel on" id="tab-overview">
+      <div class="dshell-grid">
+        <div class="dshell-stat"><div class="dshell-statLabel">数据库</div><div class="dshell-statValue" style="font-size:15px">skins.sqlite3</div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">库大小</div><div class="dshell-statValue" id="ov-size"></div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">数据表</div><div class="dshell-statValue" id="ov-tables"></div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">总记录</div><div class="dshell-statValue" id="ov-rows"></div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">皮肤</div><div class="dshell-statValue" id="ov-skins"></div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">英雄</div><div class="dshell-statValue" id="ov-heroes"></div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">资产记录</div><div class="dshell-statValue" id="ov-assets"></div></div>
+        <div class="dshell-stat"><div class="dshell-statLabel">图片文件</div><div class="dshell-statValue" id="ov-images"></div></div>
+      </div>
+
+      <div class="dshell-card">
+        <h2 class="dshell-sub" style="margin:0 0 8px">表清单（11 张）</h2>
+        <div class="table-wrap" style="max-height:34vh">
+          <table class="dshell-table" id="ov-table"></table>
+        </div>
+      </div>
+
+      <div class="dshell-card">
+        <h2 class="dshell-sub" style="margin:0 0 8px">最近一次爬虫运行</h2>
+        <div class="kv-grid" id="ov-crawl"></div>
+      </div>
+
+      <div class="dshell-card">
+        <h2 class="dshell-sub" style="margin:0 0 8px">资产与图片</h2>
+        <div class="kv-grid">
+          <div class="kv-cell"><div class="k">资产记录</div><div class="v" id="as-records"></div></div>
+          <div class="kv-cell"><div class="k">download_status</div><div class="v" id="as-status"></div></div>
+          <div class="kv-cell"><div class="k">images/ 文件数</div><div class="v" id="as-files"></div></div>
+          <div class="kv-cell"><div class="k">skin_primary</div><div class="v" id="as-pri"></div></div>
+          <div class="kv-cell"><div class="k">hero_icon</div><div class="v" id="as-icon"></div></div>
+          <div class="kv-cell"><div class="k">skin_secondary</div><div class="v" id="as-sec"></div></div>
+        </div>
+        <p class="note" style="margin:10px 0 0">资产记录的 download_status 均为 skipped（未执行批量下载）；images/ 目录中现有 800 个文件。</p>
+      </div>
+    </div>
+
+    <!-- 皮肤 -->
+    <div class="tab-panel" id="tab-skins">
+      <div class="toolbar">
+        <input class="dshell-input" id="sk-search" placeholder="搜索皮肤 / 英雄 / 品质 / 获取方式…" style="max-width:340px" />
+        <span class="dshell-badge" id="sk-badge">960 行</span>
+        <span class="spacer"></span>
+        <div class="pager" id="sk-pager"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="dshell-table" id="sk-table"></table>
+        <div class="empty-hint" id="sk-empty" style="display:none">没有匹配的皮肤</div>
+      </div>
+    </div>
+
+    <!-- 英雄 -->
+    <div class="tab-panel" id="tab-heroes">
+      <div class="toolbar">
+        <span class="dshell-badge">131 名英雄</span>
+        <span class="spacer"></span>
+        <div class="pager" id="he-pager"></div>
+      </div>
+      <div class="table-wrap">
+        <table class="dshell-table" id="he-table"></table>
+      </div>
+    </div>
+
+    <!-- 收入 -->
+    <div class="tab-panel" id="tab-revenue">
+      <div class="chart-wrap">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h2 class="dshell-sub" style="margin:0">iPhone CN 每日收入趋势（2025-07-16 ~ 2026-07-15）</h2>
+          <span class="dshell-badge dshell-badgeDone" id="rv-total"></span>
+        </div>
+        <div id="rv-chart"></div>
+      </div>
+      <div class="toolbar">
+        <span class="dshell-badge">365 天</span>
+        <span class="spacer"></span>
+        <div class="pager" id="rv-pager"></div>
+      </div>
+      <div class="table-wrap" style="max-height:40vh">
+        <table class="dshell-table" id="rv-table"></table>
+      </div>
+    </div>
+
+    <!-- 价值 -->
+    <div class="tab-panel" id="tab-values">
+      <div class="toolbar">
+        <span class="dshell-badge">49 条价值记录</span>
+        <span class="spacer"></span>
+        <div class="pager" id="va-pager"></div>
+      </div>
+      <div class="table-wrap" style="max-height:56vh">
+        <table class="dshell-table" id="va-table"></table>
+      </div>
+    </div>
+
+    <!-- 资产 -->
+    <div class="tab-panel" id="tab-assets">
+      <div class="dshell-card">
+        <h2 class="dshell-sub" style="margin:0 0 8px">asset_type 分布</h2>
+        <div class="kv-grid" id="as-type-grid"></div>
+      </div>
+      <div class="dshell-card">
+        <h2 class="dshell-sub" style="margin:0 0 8px">download_status 分布</h2>
+        <div class="kv-grid" id="as-status-grid"></div>
+      </div>
+      <div class="dshell-card">
+        <h2 class="dshell-sub" style="margin:0 0 8px">说明</h2>
+        <p style="font-size:12px;color:var(--dsw-alias-label-secondary,#9aa4b2);margin:0">
+          skin_assets 表记录了 1731 条皮肤/英雄图片资产引用，download_status 全部为 skipped（爬虫运行未实际下载图片）。
+          images/ 目录中现有 800 个文件（<code>/home/mzhyui/git/emogame/data/wzry_skins/images/</code>）。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script type="application/json" id="db-data">__DATA__</script>
+  <script>
+  (() => {
+    const D = JSON.parse(document.getElementById('db-data').textContent);
+
+    function esc(s) {
+      return String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function dash(v) { return (v === null || v === undefined || v === '' || v === 'None') ? '—' : String(v); }
+    function fmtNum(v) {
+      const n = Number(v);
+      return isFinite(n) ? n.toLocaleString('zh-CN', { maximumFractionDigits: 0 }) : dash(v);
+    }
+    function fmtMoney(v) {
+      const n = Number(v);
+      if (!isFinite(n)) return dash(v);
+      const abs = Math.abs(n);
+      if (abs >= 1e8) return (n / 1e8).toFixed(2) + ' 亿';
+      if (abs >= 1e4) return (n / 1e4).toFixed(1) + ' 万';
+      return n.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+    }
+
+    // ---------- 通用分页表格 ----------
+    function makeTable(opts) {
+      // opts: {cols:[{k,label,cls,render}], rows, pageSize, el, emptyEl, pagerEl, badgeEl, filter}
+      let page = 0;
+      function rows() {
+        const all = opts.filter ? opts.rows.filter(opts.filter) : opts.rows;
+        return all;
+      }
+      function render() {
+        const all = rows();
+        const totalPages = Math.max(1, Math.ceil(all.length / opts.pageSize));
+        if (page >= totalPages) page = totalPages - 1;
+        const slice = all.slice(page * opts.pageSize, (page + 1) * opts.pageSize);
+        const head = '<thead><tr>' + opts.cols.map((c) => '<th>' + esc(c.label) + '</th>').join('') + '</tr></thead>';
+        const body = '<tbody>' + slice.map((r) => '<tr>' + opts.cols.map((c) => {
+          const v = r[c.k];
+          const td = c.render ? c.render(v, r) : esc(dash(v));
+          return '<td' + (c.cls ? ' class="' + c.cls + '"' : '') + '>' + td + '</td>';
+        }).join('') + '</tr>').join('') + '</tbody>';
+        opts.el.innerHTML = head + body;
+        if (opts.emptyEl) opts.emptyEl.style.display = all.length === 0 ? 'block' : 'none';
+        if (opts.badgeEl) opts.badgeEl.textContent = (opts.filter ? '匹配 ' + all.length + ' / ' : '') + opts.rows.length + ' 行';
+        if (opts.pagerEl) {
+          opts.pagerEl.innerHTML =
+            '<button class="dshell-btn dshell-btnGhost" ' + (page === 0 ? 'disabled' : '') + ' id="pg-prev">‹</button>' +
+            '<span>' + (all.length === 0 ? '0' : (page + 1)) + ' / ' + totalPages + '</span>' +
+            '<button class="dshell-btn dshell-btnGhost" ' + (page >= totalPages - 1 ? 'disabled' : '') + ' id="pg-next">›</button>';
+          const prev = opts.pagerEl.querySelector('#pg-prev');
+          const next = opts.pagerEl.querySelector('#pg-next');
+          if (prev) prev.addEventListener('click', () => { page--; render(); });
+          if (next) next.addEventListener('click', () => { page++; render(); });
+        }
+      }
+      return { render, refresh: () => { page = 0; render(); } };
+    }
+
+    // ---------- 标签页切换 ----------
+    const tabs = document.querySelectorAll('#tabs .dshell-tab');
+    tabs.forEach((tb) => tb.addEventListener('click', () => {
+      tabs.forEach((t) => t.classList.remove('dshell-tabOn'));
+      tb.classList.add('dshell-tabOn');
+      document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('on'));
+      document.getElementById('tab-' + tb.dataset.tab).classList.add('on');
+    }));
+
+    // ---------- 概览 ----------
+    document.getElementById('ov-size').textContent = D.meta.sizeMB + ' MB';
+    document.getElementById('ov-tables').textContent = D.meta.tables;
+    document.getElementById('ov-rows').textContent = fmtNum(D.meta.totalRows);
+    document.getElementById('ov-skins').textContent = fmtNum(D.meta.skins);
+    document.getElementById('ov-heroes').textContent = fmtNum(D.meta.heroes);
+    document.getElementById('ov-assets').textContent = fmtNum(D.meta.assets);
+    document.getElementById('ov-images').textContent = fmtNum(D.meta.images);
+
+    document.getElementById('ov-table').innerHTML =
+      '<thead><tr><th>表</th><th style="text-align:right">行数</th><th>说明</th></tr></thead>' +
+      '<tbody>' + D.tableList.map((t) =>
+        '<tr><td class="mono">' + esc(t.name) + '</td><td class="num">' + fmtNum(t.rows) + '</td><td class="note">' + esc(t.desc) + '</td></tr>'
+      ).join('') + '</tbody>';
+
+    const crawl = D.crawl;
+    document.getElementById('ov-crawl').innerHTML = [
+      ['爬虫运行时间', crawl.started_at],
+      ['英雄数', fmtNum(crawl.hero_count)],
+      ['皮肤数', fmtNum(crawl.skin_count)],
+      ['资产记录', fmtNum(crawl.asset_count)],
+      ['已下载', fmtNum(crawl.downloaded_count)],
+      ['图片失败', fmtNum(crawl.image_failed_count)],
+    ].map(([k, v]) => '<div class="kv-cell"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + '</div></div>').join('');
+
+    document.getElementById('as-records').textContent = fmtNum(D.assets.total);
+    document.getElementById('as-status').textContent = D.assets.statuses.map((s) => s.status + ' ×' + s.count).join('，');
+    document.getElementById('as-files').textContent = fmtNum(D.assets.images);
+    document.getElementById('as-pri').textContent = fmtNum(D.assets.byType.skin_primary || 0);
+    document.getElementById('as-icon').textContent = fmtNum(D.assets.byType.hero_icon || 0);
+    document.getElementById('as-sec').textContent = fmtNum(D.assets.byType.skin_secondary || 0);
+
+    // ---------- 品质徽标 ----------
+    function qualityChip(q) {
+      const v = String(q || '');
+      if (!v || v === 'None') return '<span class="chip">未标注</span>';
+      let cls = 'chip';
+      if (/无双|典藏/.test(v)) cls += ' chip-gold';
+      else if (/传说/.test(v)) cls += ' chip-purple';
+      else if (/史诗/.test(v)) cls += ' chip-blue';
+      else if (/勇者/.test(v)) cls += ' chip-ok';
+      else cls += ' chip-warn';
+      return '<span class="' + cls + '">' + esc(v) + '</span>';
+    }
+    function yesno(v) {
+      return String(v) === '1' ? '<span class="chip chip-ok">有</span>' : '<span class="chip">无</span>';
+    }
+
+    // ---------- 皮肤表 ----------
+    const skinsTbl = makeTable({
+      cols: [
+        { k: 'source_key', label: '资源键', cls: 'mono' },
+        { k: 'skin_name', label: '皮肤名' },
+        { k: 'hero_name', label: '英雄' },
+        { k: 'quality', label: '品质', render: qualityChip },
+        { k: 'online_date', label: '上线日期', cls: 'mono' },
+        { k: 'acquire_method', label: '获取方式' },
+        { k: 'price_text', label: '价格', cls: 'num' },
+        { k: 'has_detail_record', label: '详情记录', render: yesno },
+      ],
+      rows: D.skins,
+      pageSize: 50,
+      el: document.getElementById('sk-table'),
+      emptyEl: document.getElementById('sk-empty'),
+      pagerEl: document.getElementById('sk-pager'),
+      badgeEl: document.getElementById('sk-badge'),
+      filter: (r) => {
+        const q = document.getElementById('sk-search').value.trim().toLowerCase();
+        if (!q) return true;
+        return [r.skin_name, r.hero_name, r.quality, r.acquire_method, r.source_key].some((v) =>
+          String(v || '').toLowerCase().includes(q));
+      },
+    });
+    skinsTbl.render();
+    document.getElementById('sk-search').addEventListener('input', () => skinsTbl.refresh());
+
+    // ---------- 英雄表 ----------
+    const heroTbl = makeTable({
+      cols: [
+        { k: 'hero_id', label: 'ID', cls: 'mono' },
+        { k: 'hero_name', label: '英雄' },
+        { k: 'title', label: '称号' },
+        { k: 'hero_type', label: '定位' },
+        { k: 'skin_count', label: '皮肤数', cls: 'num' },
+      ],
+      rows: D.heroes,
+      pageSize: 50,
+      el: document.getElementById('he-table'),
+      pagerEl: document.getElementById('he-pager'),
+    });
+    heroTbl.render();
+
+    // ---------- 收入 ----------
+    document.getElementById('rv-total').textContent = '总额 ' + fmtMoney(D.revenueTotal) + ' CNY';
+    (function () {
+      const pts = D.revenue; // [{d, v}] 升序
+      const W = 1000, H = 230, P = { l: 54, r: 16, t: 18, b: 30 };
+      const maxV = Math.max.apply(null, pts.map((p) => p.v));
+      const minV = Math.min.apply(null, pts.map((p) => p.v));
+      const span = (maxV - minV) || 1;
+      const x = (i) => P.l + (i / (pts.length - 1)) * (W - P.l - P.r);
+      const y = (v) => P.t + (1 - (v - minV) / span) * (H - P.t - P.b);
+      const line = pts.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.v).toFixed(1)).join(' ');
+      const area = line + ' L' + x(pts.length - 1).toFixed(1) + ' ' + (H - P.b) + ' L' + P.l + ' ' + (H - P.b) + ' Z';
+      const maxIdx = pts.reduce((mi, p, i) => (p.v > pts[mi].v ? i : mi), 0);
+      const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => P.t + f * (H - P.t - P.b));
+      const yLabel = (f) => (minV + f * span).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+      const dateLabel = (i) => pts[i].d;
+      const svg =
+        '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+        gridY.map((gy, gi) =>
+          '<line x1="' + P.l + '" y1="' + gy.toFixed(1) + '" x2="' + (W - P.r) + '" y2="' + gy.toFixed(1) + '" stroke="rgba(128,128,128,.15)" stroke-width="1" />' +
+          '<text x="' + (P.l - 6) + '" y="' + (gy + 4).toFixed(1) + '" text-anchor="end" font-size="10" fill="rgba(160,160,160,.7)">' + yLabel(1 - gi / 4) + '</text>'
+        ).join('') +
+        '<path d="' + area + '" fill="rgba(79,142,247,.12)" />' +
+        '<path d="' + line + '" fill="none" stroke="#4f8ef7" stroke-width="1.6" stroke-linejoin="round" />' +
+        '<circle cx="' + x(maxIdx).toFixed(1) + '" cy="' + y(maxV).toFixed(1) + '" r="3.4" fill="#f5a623" />' +
+        '<text x="' + (x(maxIdx) + 6).toFixed(1) + '" y="' + (y(maxV) - 6).toFixed(1) + '" font-size="10.5" fill="#f5a623">峰值 ' + fmtMoney(maxV) + ' · ' + dateLabel(maxIdx) + '</text>' +
+        '<text x="' + P.l + '" y="' + (H - 10) + '" font-size="10" fill="rgba(160,160,160,.7)">' + dateLabel(0) + '</text>' +
+        '<text x="' + ((P.l + W - P.r) / 2) + '" y="' + (H - 10) + '" text-anchor="middle" font-size="10" fill="rgba(160,160,160,.7)">' + dateLabel(Math.floor(pts.length / 2)) + '</text>' +
+        '<text x="' + (W - P.r) + '" y="' + (H - 10) + '" text-anchor="end" font-size="10" fill="rgba(160,160,160,.7)">' + dateLabel(pts.length - 1) + '</text>' +
+        '</svg>';
+      document.getElementById('rv-chart').innerHTML = svg;
+    })();
+    const revTbl = makeTable({
+      cols: [
+        { k: 'revenue_date', label: '日期', cls: 'mono' },
+        { k: 'game', label: '游戏' },
+        { k: 'platform', label: '平台' },
+        { k: 'market', label: '市场' },
+        { k: 'currency', label: '币种' },
+        { k: 'estimated_revenue', label: '估算收入', cls: 'num', render: (v) => esc(fmtMoney(v)) },
+        { k: 'source', label: '来源', cls: 'mono' },
+      ],
+      rows: D.revenue,
+      pageSize: 50,
+      el: document.getElementById('rv-table'),
+      pagerEl: document.getElementById('rv-pager'),
+    });
+    revTbl.render();
+
+    // ---------- 价值 ----------
+    const valTbl = makeTable({
+      cols: [
+        { k: 'source_key', label: '皮肤', cls: 'mono' },
+        { k: 'period', label: '窗口期' },
+        { k: 'sales_volume', label: '销量', cls: 'num' },
+        { k: 'avg_spend_cny', label: '人均 CNY', cls: 'num', render: (v) => esc(v === null ? '—' : Number(v).toFixed(1)) },
+        { k: 'attributed_revenue', label: '归因收入', cls: 'num', render: (v) => esc(fmtMoney(v)) },
+        { k: 'signed_uplift', label: '增量', cls: 'num', render: (v) => esc(v === null ? '—' : fmtMoney(v)) },
+        { k: 'confidence', label: '置信度', cls: 'num', render: (v) => esc(v === null ? '—' : Number(v).toFixed(2)) },
+        { k: 'attribution_method', label: '归因方式' },
+      ],
+      rows: D.values,
+      pageSize: 50,
+      el: document.getElementById('va-table'),
+      pagerEl: document.getElementById('va-pager'),
+    });
+    valTbl.render();
+
+    // ---------- 资产 tab ----------
+    document.getElementById('as-type-grid').innerHTML = D.assets.typeDist.map((t) =>
+      '<div class="kv-cell"><div class="k">' + esc(t.type) + '</div><div class="v">' + fmtNum(t.count) + '</div></div>'
+    ).join('');
+    document.getElementById('as-status-grid').innerHTML = D.assets.statuses.map((s) =>
+      '<div class="kv-cell"><div class="k">' + esc(s.status) + '</div><div class="v">' + fmtNum(s.count) + '</div></div>'
+    ).join('');
+
+    document.getElementById('snap-time').textContent = D.meta.snapTime;
+  })();
+  </script>
+</body>
+</html>

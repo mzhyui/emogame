@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>data/emogame.db — 数据看板</title>
+  <link rel="stylesheet" href="/api/worktable/template/dshell.css" />
+  <style>
+    /* 仅数据看板需要的少量自造样式；配色走 dshell 主题变量 */
+    .db-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .db-search { max-width: 320px; }
+    .table-wrap { border:1px solid var(--dsw-alias-border-l1,#262b36); border-radius:8px; overflow:auto; max-height:52vh; }
+    .dshell-table { font-size:12px; }
+    .dshell-table th { position:sticky; top:0; background: var(--dsw-alias-bg-base,#0b0e14); z-index:1; }
+    .dshell-table td, .dshell-table th { white-space:nowrap; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; font-size:11.5px; }
+    .json-box {
+      white-space:pre-wrap; word-break:break-all; margin:0; padding:8px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+      font-size:11.5px; line-height:1.5;
+      background: var(--dsw-alias-fill-l1,rgba(255,255,255,.03));
+      border-radius:6px; color: var(--dsw-alias-label-secondary,#9aa4b2);
+    }
+    details summary { cursor:pointer; color: var(--dsw-alias-state-accent-primary,#4f8ef7); font-size:11.5px; }
+    .empty-hint { color: var(--dsw-alias-label-tertiary,#6b7280); font-size:12px; padding:18px; text-align:center; }
+    .chip { display:inline-block; padding:1px 9px; border-radius:999px; font-size:11px; border:1px solid var(--dsw-alias-border-l1,#262b36); color: var(--dsw-alias-label-secondary,#9aa4b2); margin:2px 4px 2px 0; }
+    .chip-ok { color:#3fb950; border-color:rgba(63,185,80,.4); }
+    .chip-warn { color:#d29922; border-color:rgba(210,153,34,.4); }
+    .chip-err { color:#f85149; border-color:rgba(248,81,73,.4); }
+  </style>
+</head>
+<body>
+  <div class="dshell">
+    <h1 class="dshell-title">data/emogame.db — 数据看板</h1>
+    <p class="dshell-sub">SQLite 数据快照 · 来源 <code>/home/mzhyui/git/emogame/data/emogame.db</code> · 快照生成于 <span id="snap-time">__SNAP_TIME__</span>（数据有更新时告诉我，我重新生成即可）</p>
+
+    <div class="db-head">
+      <span class="dshell-badge dshell-badgeDone">SQLite</span>
+      <span class="dshell-badge">__TABLES__ 张表</span>
+      <span class="dshell-badge" id="filter-badge">共 __ROWS__ 行</span>
+    </div>
+
+    <div class="dshell-grid">
+      <div class="dshell-stat"><div class="dshell-statLabel">数据库文件</div><div class="dshell-statValue" style="font-size:14px">emogame.db</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">表</div><div class="dshell-statValue">__TABLES__</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">总行数</div><div class="dshell-statValue">__ROWS__</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">字段</div><div class="dshell-statValue">__COLS__</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">大小</div><div class="dshell-statValue">__SIZE__ KB</div></div>
+      <div class="dshell-stat"><div class="dshell-statLabel">文件修改</div><div class="dshell-statValue" style="font-size:14px">__MTIME__</div></div>
+    </div>
+
+    <div class="dshell-card" id="schema-card"></div>
+
+    <div class="dshell-card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        <h2 class="dshell-sub" style="margin:0" id="table-title">数据表</h2>
+        <input class="dshell-input db-search" id="search" placeholder="搜索：皮肤键 / 来源 / 状态 / payload 关键词" />
+      </div>
+      <div class="table-wrap">
+        <table class="dshell-table" id="data-table"></table>
+        <div class="empty-hint" id="empty-hint" style="display:none">没有匹配的行</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="application/json" id="db-data">__DATA__</script>
+  <script>
+  (() => {
+    const data = JSON.parse(document.getElementById('db-data').textContent);
+
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // 渲染表结构卡：每个表 → 表名 + 列 chips
+    const schemaCard = document.getElementById('schema-card');
+    schemaCard.innerHTML = data.tables.map((t) =>
+      '<h2 class="dshell-sub" style="margin:0 0 6px">表结构 · <span class="mono">' + esc(t.name) + '</span></h2>' +
+      '<div>' + t.columns.map((c) => '<span class="chip mono">' + esc(c.name) + ' : ' + esc(c.type || '?') + '</span>').join('') + '</div>'
+    ).join('<div class="dshell-divider"></div>');
+
+    // 状态徽标颜色映射（validation_status）
+    function statusChip(v) {
+      const cls = v === 'evidence_validated' ? 'chip-ok' : (v === 'unvalidated' ? 'chip-warn' : 'chip-err');
+      return '<span class="chip ' + cls + '">' + esc(v) + '</span>';
+    }
+
+    // payload JSON 展示
+    function payloadCell(raw) {
+      let pretty;
+      try { pretty = JSON.stringify(JSON.parse(raw), null, 2); }
+      catch (e) { pretty = raw; }
+      return '<details><summary>查看 JSON</summary><pre class="json-box">' + esc(pretty) + '</pre></details>';
+    }
+
+    function buildTable(filter) {
+      const t = data.tables[0];
+      const q = (filter || '').trim().toLowerCase();
+      const thead = '<thead><tr>' + t.columns.map((c) => '<th>' + esc(c.name) + '</th>').join('') + '</tr></thead>';
+      const rows = t.rows.filter((r) => {
+        if (!q) return true;
+        return t.columns.some((c, i) => String(r[i]).toLowerCase().includes(q));
+      });
+      const tbody = '<tbody>' + rows.map((r) => {
+        const tds = t.columns.map((c, i) => {
+          const v = r[i];
+          if (c.name === 'payload') return '<td>' + payloadCell(v) + '</td>';
+          if (c.name === 'validation_status') return '<td>' + statusChip(v) + '</td>';
+          const isMono = /key|hash|source|version|_at|errors/i.test(c.name) || typeof v === 'number';
+          const txt = v === null || v === undefined ? '—' : String(v);
+          return '<td' + (isMono ? ' class="mono"' : '') + '>' + esc(txt) + '</td>';
+        }).join('');
+        return '<tr>' + tds + '</tr>';
+      }).join('') + '</tbody>';
+      document.getElementById('data-table').innerHTML = thead + tbody;
+      document.getElementById('filter-badge').textContent =
+        (q ? '匹配 ' + rows.length + ' / ' : '共 ') + t.rows.length + ' 行';
+      document.getElementById('empty-hint').style.display = rows.length === 0 ? 'block' : 'none';
+    }
+
+    document.getElementById('table-title').textContent =
+      data.tables[0].name + ' 数据（' + data.tables[0].rows.length + ' 行）';
+    buildTable('');
+    document.getElementById('search').addEventListener('input', (e) => buildTable(e.target.value));
+    document.getElementById('snap-time').textContent = data.meta.snapTime;
+  })();
+  </script>
+</body>
+</html>

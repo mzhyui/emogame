@@ -18,7 +18,8 @@ class VLMSettings(BaseSettings):
     ollama_host: str = "http://127.0.0.1:11434"
     l1_model: str = "qwen2.5vl:3b"
     l2_model: str = "qwen2.5vl:3b"
-    l1_fallback_model: str = ""
+    l1_fallback_model: str = "llama3.2-vision:11b"
+    l2_fallback_model: str = "llama3.2-vision:11b"
 
     # ── AutoDL (L3 + LLM-expert) — OpenAI-compatible vision API ──
     autodl_token: str = ""

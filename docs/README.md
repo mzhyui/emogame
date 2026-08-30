@@ -16,6 +16,8 @@
 | 07 | [商业价值分析](07-business-analysis.md) | 定价引擎、风险预警、竞品对比、案例库 |
 | 08 | [用户工作流与前端](08-user-workflow.md) | 端到端用户旅程、Streamlit 页面设计 |
 | 09 | [部署与运维](09-deployment.md) | Docker 部署、GPU 需求、开发路线图 |
+| 10 | [Agent Lightning 本地 Agentic RL 教程](10-agent-lightning-local.md) | 已固定的上游子模块、单机验证和 GPU 训练边界 |
+| 11 | [Agentic RL 方法综述](11-agentic-rl-method-survey.md) · [PPT](11-agentic-rl-method-survey.pptx) | 10 篇相关工作、方法比较、Agent Lightning 定位与实验路线 |
 
 ## 快速导航
 
@@ -25,6 +27,8 @@
 - **算法/ML 工程师** → [02 VLM](02-vlm-pipeline.md) → [04 特征工程](04-feature-engineering.md) → [05 模型层](05-model-layer.md)
 - **前端开发者** → [01 架构](01-architecture.md) → [08 用户工作流](08-user-workflow.md)
 - **DevOps** → [09 部署](09-deployment.md)
+- **Agentic RL 实验者** → [10 Agent Lightning 本地教程](10-agent-lightning-local.md)
+- **Agentic RL 研究者** → [11 方法综述](11-agentic-rl-method-survey.md) → [10 Agent Lightning 本地教程](10-agent-lightning-local.md)
 - **产品/项目经理** → [01 架构](01-architecture.md) → [07 商业分析](07-business-analysis.md) → [08 用户工作流](08-user-workflow.md)
 
 ### 按开发阶段
@@ -89,6 +93,7 @@ emogame/
 ├── tests/                          # 测试
 ├── docs/                           # 技术文档
 ├── hero-skin-image/                # Git submodule (皮肤图片数据)
+├── agent-lightning/                # Git submodule (本地 Agentic RL 演示)
 ├── requirements.txt
 ├── Dockerfile
 └── docker-compose.yml

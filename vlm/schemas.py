@@ -158,6 +158,8 @@ class VLMFeatureVector(BaseModel):
     cache_hit_l2: bool = False
     cache_hit_l3: bool = False
     execution_mode: str = "full"  # "l1_l2" | "full"
+    tier_diagnostics: dict[str, dict] = Field(default_factory=dict)
+    tier_provenance: dict[str, dict] = Field(default_factory=dict)
 
     def to_dict(self) -> dict:
         """Serialize to a plain dict (compatible with ``**vlm_features`` usage)."""

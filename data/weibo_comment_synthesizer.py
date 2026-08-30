@@ -14,6 +14,7 @@ import hashlib
 import json
 import sqlite3
 import time
+import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,12 @@ from vlm.text_prompts import build_generation_prompt
 
 DEFAULT_WEIBO_DB = Path("data/weibo_comments/weibo.sqlite3")
 GENERATOR_VERSION = "weibo-comment-synth-v1"
+
+
+def make_synth_batch_id(seed: int) -> str:
+    """Return a unique, traceable identifier for one generator invocation."""
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    return f"synth-wc-{seed}-{timestamp}-{uuid.uuid4().hex[:8]}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -174,6 +181,76 @@ class SyntheticWeiboRepository:
                     # Duplicate text_hash within this batch — skip
                     pass
             conn.commit()
+
+    def save_generation(self, batch: dict[str, Any], rows: list[dict[str, Any]]) -> int:
+        """Atomically persist one new batch and return its inserted row count.
+
+        A batch identifier is immutable: attempting to reuse it raises instead
+        of replacing its metadata while appending another set of comments.
+        """
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """
+                INSERT INTO synth_weibo_batches
+                    (synth_batch, seed, model, generator_version, prompt_version,
+                     params_json, skin_count, per_skin, row_count, rejection_count,
+                     cache_hits, cache_misses, elapsed_seconds, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    batch["synth_batch"],
+                    batch["seed"],
+                    batch["model"],
+                    batch["generator_version"],
+                    batch["prompt_version"],
+                    batch["params_json"],
+                    batch["skin_count"],
+                    batch["per_skin"],
+                    0,
+                    batch["rejection_count"],
+                    batch.get("cache_hits", 0),
+                    0,
+                    batch["elapsed_seconds"],
+                    batch["created_at"],
+                ),
+            )
+
+            inserted = 0
+            for row in rows:
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO synthetic_weibo_comments
+                        (synth_batch, skin_key, hero_name, skin_name, quality,
+                         text, text_hash, temperature, prompt_hash, cached, attempt, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        batch["synth_batch"],
+                        row["skin_key"],
+                        row.get("hero_name"),
+                        row.get("skin_name"),
+                        row.get("quality"),
+                        row["text"],
+                        row["text_hash"],
+                        row["temperature"],
+                        row.get("prompt_hash"),
+                        row.get("cached", 0),
+                        row.get("attempt", 1),
+                        row["created_at"],
+                    ),
+                )
+                inserted += cursor.rowcount
+
+            conn.execute(
+                """
+                UPDATE synth_weibo_batches
+                SET row_count = ?, cache_misses = ?
+                WHERE synth_batch = ?
+                """,
+                (inserted, inserted, batch["synth_batch"]),
+            )
+            conn.commit()
+            return inserted
 
     def get_batch(self, synth_batch: str) -> dict[str, Any] | None:
         """Fetch one batch metadata row."""
@@ -603,7 +680,7 @@ class WeiboCommentSynthesizer:
         model = model or self.ollama.settings.weibo_synth_model
 
         # Build batch ID
-        batch_id = f"synth-wc-{seed}-{time.strftime('%Y%m%d')}"
+        batch_id = make_synth_batch_id(seed)
 
         # Get skin profiles
         profiles = self.build_skin_profiles(skin_keys)
@@ -659,7 +736,8 @@ class WeiboCommentSynthesizer:
 
         elapsed = time.perf_counter() - started
 
-        # Save batch metadata
+        # Persist metadata and comments as one transaction. The stored count,
+        # rather than attempted generation count, is the reported batch size.
         batch_meta = {
             "synth_batch": batch_id,
             "seed": seed,
@@ -673,7 +751,7 @@ class WeiboCommentSynthesizer:
             }),
             "skin_count": len(profiles),
             "per_skin": per_skin,
-            "row_count": len(all_comments),
+            "row_count": 0,
             "rejection_count": total_rejected,
             "cache_hits": 0,  # TODO: track in M5
             "cache_misses": len(all_comments),
@@ -681,20 +759,15 @@ class WeiboCommentSynthesizer:
             "created_at": time.time(),
         }
 
-        self.repo.save_batch(batch_meta)
-
-        # Save comments with proper batch ID
-        if all_comments:
-            for c in all_comments:
-                c["synth_batch"] = batch_id
-            self.repo.save_comments(batch_id, all_comments)
+        inserted = self.repo.save_generation(batch_meta, all_comments)
+        total_rejected += len(all_comments) - inserted
 
         return {
             "synth_batch": batch_id,
             "status": "success",
             "skin_count": len(profiles),
             "per_skin": per_skin,
-            "row_count": len(all_comments),
+            "row_count": inserted,
             "rejection_count": total_rejected,
             "elapsed_seconds": round(elapsed, 2),
         }

@@ -44,6 +44,24 @@ L2_PROMPT = """\
   {"has_limited_tag": bool, "has_discount_tag": bool, "has_gacha_tag": bool, "special_border": bool, "tier_label": "传说"}
 
 输出严格 JSON 格式，不要包含任何额外文本。
+
+必须返回完整的顶层对象，字段不得省略。用实际评分替换示例数字：
+{
+  "model_detail": 8,
+  "effect_quality": 8,
+  "color_scheme": 8,
+  "composition": 8,
+  "uniqueness": 8,
+  "costume_design": 8,
+  "background_quality": 8,
+  "ui_elements": {
+    "has_limited_tag": false,
+    "has_discount_tag": false,
+    "has_gacha_tag": false,
+    "special_border": false,
+    "tier_label": "传说"
+  }
+}
 """
 
 # ── L3: Semantic understanding (AutoDL GPT-5.4-mini API) ──

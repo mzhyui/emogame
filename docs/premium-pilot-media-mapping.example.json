@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "source_key": "105-02",
+      "platform": "weibo",
+      "external_id": "replace-with-real-mid",
+      "url": "https://weibo.com/replace-with-real-mid",
+      "published_at": "2026-08-27T00:00:00+08:00",
+      "mapping_rationale": "The official post explicitly names this hero and skin; a reviewer checked the match.",
+      "is_synthetic": false
+    }
+  ]
+}
