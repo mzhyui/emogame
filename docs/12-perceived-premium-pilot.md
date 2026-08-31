@@ -12,6 +12,10 @@ used after scores have been frozen.
 - A manually reviewed media map links real public Weibo posts to at most a
   subset of the cohort. The script strips user IDs and names before optional
   remote comment enrichment.
+- Alternatively, `--media-comments-json` accepts the bounded, target-aware real
+  comment artifact produced by `scripts/crawl_radar_weibo_comments.py`. This
+  preserves each skin's comment subset even when two targets share a post and
+  enforces the collection cap of 25 comments per target.
 - Synthetic media is rejected. A missing media link remains missing; it is not
   converted to a zero or a generated label.
 - Revenue is read only from pre-existing signed release-window records after
@@ -92,6 +96,24 @@ python scripts/run_premium_pilot.py \
   --media-use-llm \
   --output-dir data/premium_pilot/runs/20260828-seed42-media
 ```
+
+For a radar cohort with a completed target-aware comment crawl, keep the prior
+VLM output frozen and use the deterministic rule-based social scorer (omit
+`--media-use-llm`):
+
+```bash
+python scripts/run_premium_pilot.py \
+  --manifest previous/manifest.json \
+  --vlm-results previous/vlm_outputs.jsonl \
+  --media-comments-json previous/weibo_comments.json \
+  --force-media \
+  --output-dir new-social-run
+```
+
+The loader rejects synthetic markers, unknown post references, duplicate or
+empty comments, unsupported source types, and any target above the 25-comment
+cap. Only comment text and like count enter the scorer; user identifiers remain
+solely in the source crawl artifact.
 
 The manifest loader checks record cardinality, unique source keys, image
 existence, and every image SHA-256 before scoring.

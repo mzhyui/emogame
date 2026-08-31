@@ -11,6 +11,7 @@ import hashlib
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from models.premium_pilot import (
     MediaEvidence,
@@ -33,6 +34,8 @@ from models.premium_pilot import (
 from crawlers.wzry_skin_crawler import HeroRecord, SkinRecord, ensure_schema, save_hero, save_skin
 from scripts.run_premium_pilot import (
     async_main,
+    label_collected_media,
+    load_collected_media,
     output_run_lock,
     reusable_vlm_result,
     reviewer_cards,
@@ -221,6 +224,25 @@ class PremiumScoringTests(unittest.TestCase):
         self.assertEqual(trace["inputs"]["semantic"]["values"]["design_style"], "水墨国风")
         self.assertEqual(trace["provenance_status"], "complete")
 
+    def test_feature_trace_reconstructs_half_cent_complete_score(self):
+        item = candidate(quality="勇者")
+        output = vlm_output(9.0)
+        result = score_premium(item, vlm=output, media_score=68.7)
+
+        trace = build_feature_trace(
+            item,
+            vlm=output,
+            media_score=68.7,
+            media_status="linked",
+            meaningful_media_comments=25,
+            linked_media_ids=["mid"],
+            score=result,
+            manifest_sha256="manifest",
+        )
+
+        self.assertEqual(result.perceived_premium_score, 71.68)
+        self.assertEqual(trace["fusion"]["reconstructed_score"], 71.68)
+
 
 class MediaEvidenceTests(unittest.TestCase):
     def test_synthetic_media_mapping_is_rejected(self):
@@ -261,6 +283,151 @@ class MediaEvidenceTests(unittest.TestCase):
         self.assertEqual(score, 70.0)
         self.assertEqual(count, 10)
         self.assertEqual(ids, ["1", "2"])
+
+    def test_target_aware_comments_keep_shared_posts_target_specific(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "comments.json"
+            targets = []
+            for source_key, text in (("skin-a", "好看"), ("skin-b", "不值")):
+                targets.append(
+                    {
+                        "source_key": source_key,
+                        "match_scope": "exact_skin",
+                        "comment_count": 1,
+                        "posts": [
+                            {
+                                "mid": "shared-mid",
+                                "title": "shared post",
+                                "source_type": "official",
+                                "created_at": "2026-08-30",
+                            }
+                        ],
+                        "comments": [
+                            {
+                                "post_mid": "shared-mid",
+                                "post_source_type": "official",
+                                "user_id": source_key,
+                                "created_at": "2026-08-30",
+                                "text": text,
+                                "like_count": 1,
+                            }
+                        ],
+                    }
+                )
+            path.write_text(
+                json.dumps({"schema_version": 1, "targets": targets}),
+                encoding="utf-8",
+            )
+
+            loaded = load_collected_media(path)
+
+            self.assertEqual(loaded["skin-a"][0].comments[0]["text"], "好看")
+            self.assertEqual(loaded["skin-b"][0].comments[0]["text"], "不值")
+            self.assertEqual(loaded["skin-a"][0].external_id, "shared-mid")
+            self.assertEqual(loaded["skin-b"][0].external_id, "shared-mid")
+
+    def test_target_aware_comments_enforce_per_target_cap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "comments.json"
+            comments = [
+                {
+                    "post_mid": "mid",
+                    "post_source_type": "general",
+                    "user_id": index,
+                    "created_at": str(index),
+                    "text": f"comment-{index}",
+                    "like_count": 0,
+                }
+                for index in range(26)
+            ]
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "targets": [
+                            {
+                                "source_key": "skin-a",
+                                "match_scope": "exact_skin",
+                                "comment_count": 26,
+                                "posts": [
+                                    {
+                                        "mid": "mid",
+                                        "title": "post",
+                                        "source_type": "general",
+                                    }
+                                ],
+                                "comments": comments,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "maximum is 25"):
+                load_collected_media(path)
+
+    def test_collected_label_provenance_records_association_scope(self):
+        class FakeLabel:
+            def to_record(self):
+                return {
+                    "mid": "mid",
+                    "community_premium": 75.0,
+                    "n_meaningful": 1,
+                }
+
+        class FakeLabeler:
+            async def label_post(self, *args, **kwargs):
+                return FakeLabel()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "comments.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "targets": [
+                            {
+                                "source_key": "skin-a",
+                                "match_scope": "hero_skin_fallback",
+                                "comment_count": 1,
+                                "posts": [
+                                    {
+                                        "mid": "mid",
+                                        "title": "post",
+                                        "source_type": "general",
+                                        "created_at": "2026-08-30",
+                                    }
+                                ],
+                                "comments": [
+                                    {
+                                        "post_mid": "mid",
+                                        "post_source_type": "general",
+                                        "user_id": 1,
+                                        "created_at": "2026-08-30",
+                                        "text": "comment",
+                                        "like_count": 0,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            collected = load_collected_media(path)
+            from models import community_labels
+
+            with patch.object(
+                community_labels,
+                "CommunitySignalLabeler",
+                return_value=FakeLabeler(),
+            ):
+                labels, provenance = asyncio.run(
+                    label_collected_media(collected, use_llm=False, force=True)
+                )
+            self.assertEqual(labels["skin-a"][0]["comment_association"], "target_specific")
+            self.assertEqual(provenance[0]["collection_match_scope"], "hero_skin_fallback")
+            self.assertEqual(provenance[0]["collection_source_type"], "general")
 
 
 class ValidationTests(unittest.TestCase):

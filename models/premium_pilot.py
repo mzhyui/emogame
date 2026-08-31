@@ -636,11 +636,13 @@ def build_feature_trace(
         _WEIGHTS[name] for name, value in components.items() if value is not None
     )
     contribution_rows: list[dict[str, Any]] = []
+    contribution_total = 0.0
     for name in _WEIGHTS:
         value = components[name]
         available = value is not None
         effective_weight = _WEIGHTS[name] / used_weight if available and used_weight else 0.0
         contribution = value * effective_weight if available else 0.0
+        contribution_total += contribution
         contribution_rows.append(
             {
                 "name": name,
@@ -652,7 +654,7 @@ def build_feature_trace(
             }
         )
     reconstructed = (
-        round(sum(row["weighted_contribution"] for row in contribution_rows), 2)
+        round(contribution_total, 2)
         if used_weight
         else None
     )

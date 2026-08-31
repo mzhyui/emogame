@@ -25,6 +25,7 @@ import subprocess
 import sys
 from collections import Counter, defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -60,6 +61,31 @@ from models.premium_pilot import (
 )
 
 EXECUTION_MODES = ("l1_l2", "full")
+MAX_COLLECTED_COMMENTS_PER_TARGET = 25
+
+
+@dataclass(frozen=True)
+class CollectedMediaPost:
+    """One target-specific real Weibo post and its bounded public comments."""
+
+    source_key: str
+    external_id: str
+    title: str
+    comments: tuple[dict[str, Any], ...]
+    source_type: str
+    published_at: str
+    match_scope: str
+
+    @property
+    def url(self) -> str:
+        return f"https://m.weibo.cn/detail/{self.external_id}"
+
+    @property
+    def mapping_rationale(self) -> str:
+        return (
+            "target-aware radar collection; "
+            f"match_scope={self.match_scope}; source_type={self.source_type}"
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,7 +103,18 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Reuse and verify a previously frozen manifest instead of selecting again.",
     )
-    parser.add_argument("--media-map", type=Path, help="Verified real-post-to-skin JSON map.")
+    media_input = parser.add_mutually_exclusive_group()
+    media_input.add_argument(
+        "--media-map", type=Path, help="Verified real-post-to-skin JSON map."
+    )
+    media_input.add_argument(
+        "--media-comments-json",
+        type=Path,
+        help=(
+            "Target-aware real Weibo comments produced by "
+            "crawl_radar_weibo_comments.py."
+        ),
+    )
     parser.add_argument(
         "--weibo-db", type=Path, default=Path("data/weibo_comments/weibo.sqlite3"),
         help="Local public Weibo post/comment database.",
@@ -165,6 +202,126 @@ def load_vlm_results(path: Path | None) -> dict[str, dict[str, Any]]:
                 raise ValueError(f"{path}:{line_number} duplicates {source_key}")
             rows[source_key] = dict(vlm)
     return rows
+
+
+def load_collected_media(
+    path: Path | None,
+) -> dict[str, list[CollectedMediaPost]]:
+    """Load target-aware public comments while preserving per-target subsets."""
+    if path is None:
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(raw, dict) or raw.get("schema_version") != 1:
+        raise ValueError("unsupported or malformed target-aware media comments")
+    if raw.get("is_synthetic"):
+        raise ValueError("synthetic media is forbidden in the premium pilot")
+    targets = raw.get("targets")
+    if not isinstance(targets, list):
+        raise ValueError("target-aware media comments require a targets list")
+
+    collected: dict[str, list[CollectedMediaPost]] = {}
+    for target_index, target in enumerate(targets):
+        if not isinstance(target, dict):
+            raise ValueError(f"media target {target_index} is not an object")
+        if target.get("is_synthetic"):
+            raise ValueError("synthetic media is forbidden in the premium pilot")
+        source_key = str(target.get("source_key") or "").strip()
+        if not source_key or source_key in collected:
+            raise ValueError(
+                f"target-aware media has missing or duplicate source_key: {source_key}"
+            )
+        match_scope = str(target.get("match_scope") or "").strip()
+        posts = target.get("posts")
+        comments = target.get("comments")
+        if not isinstance(posts, list) or not isinstance(comments, list):
+            raise ValueError(f"{source_key} requires posts and comments lists")
+        if len(comments) > MAX_COLLECTED_COMMENTS_PER_TARGET:
+            raise ValueError(
+                f"{source_key} has {len(comments)} comments; maximum is "
+                f"{MAX_COLLECTED_COMMENTS_PER_TARGET}"
+            )
+        declared_count = target.get("comment_count")
+        if declared_count is not None and int(declared_count) != len(comments):
+            raise ValueError(f"{source_key} comment_count does not match comments")
+
+        post_by_mid: dict[str, dict[str, Any]] = {}
+        for post in posts:
+            if not isinstance(post, dict):
+                raise ValueError(f"{source_key} contains a non-object post")
+            if post.get("is_synthetic"):
+                raise ValueError("synthetic media is forbidden in the premium pilot")
+            mid = str(post.get("mid") or "").strip()
+            source_type = str(post.get("source_type") or "").strip().lower()
+            if not mid or mid in post_by_mid:
+                raise ValueError(f"{source_key} has missing or duplicate post mid: {mid}")
+            if source_type not in {"official", "general"}:
+                raise ValueError(
+                    f"{source_key}/{mid} has unsupported source_type: {source_type}"
+                )
+            post_by_mid[mid] = post
+
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        seen_comments: set[tuple[str, str, str, str]] = set()
+        for comment in comments:
+            if not isinstance(comment, dict):
+                raise ValueError(f"{source_key} contains a non-object comment")
+            if comment.get("is_synthetic"):
+                raise ValueError("synthetic media is forbidden in the premium pilot")
+            mid = str(comment.get("post_mid") or "").strip()
+            if mid not in post_by_mid:
+                raise ValueError(f"{source_key} comment references unknown post {mid}")
+            post_source_type = str(
+                comment.get("post_source_type") or ""
+            ).strip().lower()
+            expected_source_type = str(
+                post_by_mid[mid].get("source_type") or ""
+            ).strip().lower()
+            if post_source_type != expected_source_type:
+                raise ValueError(
+                    f"{source_key}/{mid} comment source type does not match post"
+                )
+            text = str(comment.get("text") or "").strip()
+            if not text:
+                raise ValueError(f"{source_key}/{mid} contains an empty comment")
+            try:
+                like_count = int(comment.get("like_count", 0) or 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{source_key}/{mid} has a non-integer like_count"
+                ) from exc
+            if like_count < 0:
+                raise ValueError(f"{source_key}/{mid} has a negative like_count")
+            comment_key = (
+                mid,
+                str(comment.get("user_id") or ""),
+                str(comment.get("created_at") or ""),
+                text,
+            )
+            if comment_key in seen_comments:
+                raise ValueError(f"{source_key}/{mid} contains a duplicate comment")
+            seen_comments.add(comment_key)
+            # Only public text and engagement enter scoring. User identity and
+            # crawler metadata remain in the source artifact, not model inputs.
+            grouped[mid].append({"text": text, "like_count": like_count})
+
+        items: list[CollectedMediaPost] = []
+        for mid, post in post_by_mid.items():
+            target_comments = grouped.get(mid, [])
+            if not target_comments:
+                continue
+            items.append(
+                CollectedMediaPost(
+                    source_key=source_key,
+                    external_id=mid,
+                    title=str(post.get("title") or ""),
+                    comments=tuple(target_comments),
+                    source_type=str(post.get("source_type") or "").lower(),
+                    published_at=str(post.get("created_at") or ""),
+                    match_scope=match_scope,
+                )
+            )
+        collected[source_key] = items
+    return collected
 
 
 def reusable_vlm_result(row: Mapping[str, Any], execution_mode: str) -> bool:
@@ -269,6 +426,49 @@ async def label_linked_media(
                 row["mapping_rationale"] = entry.mapping_rationale
                 labels_by_skin[source_key].append(row)
                 provenance.append(row)
+    return labels_by_skin, provenance
+
+
+async def label_collected_media(
+    collected: Mapping[str, list[CollectedMediaPost]],
+    *,
+    use_llm: bool,
+    force: bool,
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    """Score target-specific real comments without merging shared post subsets."""
+    labels_by_skin: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    provenance: list[dict[str, Any]] = []
+    if not collected:
+        return labels_by_skin, provenance
+    from models.community_labels import CommunitySignalLabeler
+
+    labeler = CommunitySignalLabeler()
+    for source_key, posts in collected.items():
+        for post in posts:
+            label = await labeler.label_post(
+                post.external_id,
+                post.title,
+                list(post.comments),
+                skin_index=None,
+                force=force,
+                use_llm=use_llm,
+            )
+            row = label.to_record()
+            row.update(
+                {
+                    "source_key": source_key,
+                    "remote_enrichment_requested": use_llm,
+                    "platform": "weibo",
+                    "url": post.url,
+                    "published_at": post.published_at,
+                    "mapping_rationale": post.mapping_rationale,
+                    "collection_match_scope": post.match_scope,
+                    "collection_source_type": post.source_type,
+                    "comment_association": "target_specific",
+                }
+            )
+            labels_by_skin[source_key].append(row)
+            provenance.append(row)
     return labels_by_skin, provenance
 
 
@@ -390,6 +590,8 @@ def build_run_metadata(
         Path("vlm/prompts.py"),
         Path("vlm/provenance.py"),
     ]
+    media_comments_json = getattr(args, "media_comments_json", None)
+    media_map = getattr(args, "media_map", None)
     return {
         "run_metadata_version": 1,
         "run_id": args.output_dir.name,
@@ -412,14 +614,21 @@ def build_run_metadata(
         "inputs": {
             "skin_db": {"path": str(args.db), "sha256": _optional_file_sha256(args.db)},
             "weibo_db": {
-                "path": str(args.weibo_db),
-                "sha256": _optional_file_sha256(args.weibo_db),
+                "path": str(args.weibo_db) if media_map is not None else None,
+                "sha256": (
+                    _optional_file_sha256(args.weibo_db)
+                    if media_map is not None
+                    else None
+                ),
             },
             "input_manifest_sha256": _optional_file_sha256(
                 getattr(args, "manifest", None)
             ),
             "vlm_results_sha256": _optional_file_sha256(args.vlm_results),
-            "media_map_sha256": _optional_file_sha256(args.media_map),
+            "media_map_sha256": _optional_file_sha256(media_map),
+            "media_comments_json_sha256": _optional_file_sha256(
+                media_comments_json
+            ),
             "reviewer_csv_sha256": _optional_file_sha256(args.reviewer_csv),
         },
         "source_sha256": {
@@ -428,6 +637,11 @@ def build_run_metadata(
         "git": _git_metadata(),
         "evidence_policy": {
             "synthetic_media_allowed": False,
+            "media_input_mode": (
+                "target_aware_comments"
+                if media_comments_json is not None
+                else "verified_map_sqlite" if media_map is not None else "missing"
+            ),
             "l3_score_role": "non_scoring_rationale",
             "validation_only_fields": ["reviewer_rating", "signed_revenue_uplift"],
         },
@@ -603,16 +817,27 @@ async def _async_main_unlocked(args: argparse.Namespace) -> int:
             + ", ".join(sorted(unknown_vlm_keys))
         )
 
-    mapping = load_media_mapping(args.media_map)
-    unknown_media_keys = set(mapping) - {candidate.source_key for candidate in candidates}
+    media_map = getattr(args, "media_map", None)
+    media_comments_json = getattr(args, "media_comments_json", None)
+    if media_map is not None and media_comments_json is not None:
+        raise ValueError("--media-map and --media-comments-json are mutually exclusive")
+    mapping = load_media_mapping(media_map)
+    collected = load_collected_media(media_comments_json)
+    media_keys = set(mapping) | set(collected)
+    unknown_media_keys = media_keys - {candidate.source_key for candidate in candidates}
     if unknown_media_keys:
         raise ValueError(
-            "media map contains source keys outside the selected cohort: "
+            "media input contains source keys outside the selected cohort: "
             + ", ".join(sorted(unknown_media_keys))
         )
-    media_labels, media_provenance = await label_linked_media(
-        mapping, args.weibo_db, use_llm=args.media_use_llm, force=args.force_media
-    )
+    if collected:
+        media_labels, media_provenance = await label_collected_media(
+            collected, use_llm=args.media_use_llm, force=args.force_media
+        )
+    else:
+        media_labels, media_provenance = await label_linked_media(
+            mapping, args.weibo_db, use_llm=args.media_use_llm, force=args.force_media
+        )
 
     scored_rows: list[dict[str, Any]] = []
     trace_rows: list[dict[str, Any]] = []
@@ -628,7 +853,7 @@ async def _async_main_unlocked(args: argparse.Namespace) -> int:
         score_objects.append(score)
         media_status = (
             "linked" if media_score is not None else
-            "linked_insufficient" if candidate.source_key in mapping else "missing"
+            "linked_insufficient" if candidate.source_key in media_keys else "missing"
         )
         scored_rows.append(
             {

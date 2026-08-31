@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -8,6 +9,7 @@ from crawlers.weibo_skin_comment_crawler import (
     WeiboPost,
     WeiboAccessBlocked,
     WeiboClient,
+    fetch_hot_comments,
     fetch_post_text,
     format_output,
 )
@@ -21,6 +23,19 @@ class FakeClient:
     async def _request(self, url, params=None):
         self.calls.append((url, params))
         return self.response
+
+
+class SequenceClient:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+        self.calls = []
+
+    async def _request(self, url, params=None):
+        self.calls.append((url, params))
+        response = next(self.responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 class FetchPostTextTests(unittest.IsolatedAsyncioTestCase):
@@ -63,6 +78,62 @@ class FetchPostTextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text, "preview…")
 
 
+class FetchHotCommentsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stops_when_weibo_repeats_pagination_cursor(self):
+        def payload(text):
+            return {
+                "ok": 1,
+                "data": {
+                    "data": [{
+                        "user": {"screen_name": "viewer", "id": 1},
+                        "text": text,
+                        "like_count": 0,
+                        "total_number": 0,
+                        "created_at": "today",
+                        "source": "",
+                    }],
+                    "max_id": 7,
+                },
+            }
+
+        client = SequenceClient([payload("first"), payload("second")])
+
+        comments = await fetch_hot_comments(client, "123", max_comments=10)
+
+        self.assertEqual([comment["text"] for comment in comments], ["first", "second"])
+        self.assertEqual(len(client.calls), 2)
+
+    async def test_keeps_first_page_when_later_page_fails(self):
+        first_page = {
+            "ok": 1,
+            "data": {
+                "data": [{
+                    "user": {"screen_name": "viewer", "id": 1},
+                    "text": "first",
+                    "like_count": 0,
+                    "total_number": 0,
+                    "created_at": "today",
+                    "source": "",
+                }],
+                "max_id": 7,
+            },
+        }
+        client = SequenceClient([first_page, ValueError("later page unavailable")])
+
+        comments = await fetch_hot_comments(client, "123", max_comments=10)
+
+        self.assertEqual([comment["text"] for comment in comments], ["first"])
+        self.assertEqual(len(client.calls), 2)
+
+    async def test_treats_explicit_no_comments_response_as_empty(self):
+        client = SequenceClient([ValueError("还没有人评论哦~快来抢沙发！")])
+
+        comments = await fetch_hot_comments(client, "123", max_comments=10)
+
+        self.assertEqual(comments, [])
+        self.assertEqual(len(client.calls), 1)
+
+
 class WeiboClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_http_432_is_not_retried(self):
         request_count = 0
@@ -86,6 +157,35 @@ class WeiboClientTests(unittest.IsolatedAsyncioTestCase):
             await client._client.aclose()
 
         self.assertEqual(request_count, 1)
+
+    async def test_transient_protocol_error_is_retried(self):
+        request_count = 0
+
+        def handler(request):
+            nonlocal request_count
+            request_count += 1
+            if request_count == 1:
+                raise httpx.RemoteProtocolError("server disconnected", request=request)
+            return httpx.Response(200, json={"ok": 1, "data": {}}, request=request)
+
+        client = WeiboClient("cookie", max_retries=2)
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        async def no_wait():
+            return None
+
+        client.rate_limiter.wait = no_wait
+        try:
+            with patch(
+                "crawlers.weibo_skin_comment_crawler.asyncio.sleep",
+                new=AsyncMock(),
+            ):
+                response = await client._request("https://m.weibo.cn/test")
+        finally:
+            await client._client.aclose()
+
+        self.assertEqual(response["ok"], 1)
+        self.assertEqual(request_count, 2)
 
 
 class OutputTests(unittest.TestCase):

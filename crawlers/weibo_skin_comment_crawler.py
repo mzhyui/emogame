@@ -276,7 +276,7 @@ class WeiboClient:
                         response=resp,
                     )
                 return data
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
                 if attempt < self.max_retries - 1:
                     wait = 2 ** attempt + random.uniform(0, 1)
                     logger.debug("Request failed (attempt %d/%d), retrying in %.1fs: %s",
@@ -473,14 +473,29 @@ async def fetch_hot_comments(
     """Fetch hot comments for a post using the hotflow API."""
     comments: list[dict] = []
     max_id = 0
+    seen_max_ids: set[int] = set()
 
     while len(comments) < max_comments:
-        data = await client._request(HOTFLOW_URL, params={
-            "id": mid,
-            "mid": mid,
-            "max_id_type": 0,
-            "max_id": max_id,
-        })
+        try:
+            data = await client._request(HOTFLOW_URL, params={
+                "id": mid,
+                "mid": mid,
+                "max_id_type": 0,
+                "max_id": max_id,
+            })
+        except Exception as exc:
+            if "还没有人评论" in str(exc):
+                logger.info("No comments available for mid=%s", mid)
+                break
+            if not comments:
+                raise
+            logger.warning(
+                "Later hot-comment page failed for mid=%s; keeping %d comments: %s",
+                mid,
+                len(comments),
+                exc,
+            )
+            break
         if data.get("ok") != 1:
             break
 
@@ -501,9 +516,18 @@ async def fetch_hot_comments(
                 "source": item.get("source", ""),
             })
 
-        max_id = data.get("data", {}).get("max_id", 0)
-        if max_id == 0:
+        next_max_id = data.get("data", {}).get("max_id", 0)
+        if next_max_id == 0:
             break
+        if next_max_id == max_id or next_max_id in seen_max_ids:
+            logger.warning(
+                "Hot-comment pagination repeated max_id=%s for mid=%s; stopping",
+                next_max_id,
+                mid,
+            )
+            break
+        seen_max_ids.add(next_max_id)
+        max_id = next_max_id
 
     return comments[:max_comments]
 
