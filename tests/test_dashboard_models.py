@@ -23,6 +23,7 @@ from dashboard.query import (
     get_portfolio_rows,
     get_portfolio_summary,
     get_release_revenue_timeline,
+    get_skin_detail,
 )
 
 
@@ -207,6 +208,19 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual(end, release + timedelta(days=6))
         self.assertEqual(start, end - timedelta(days=365))
 
+    def test_release_events_respect_analysis_and_online_periods(self):
+        self.add_skin("1-1", date(2026, 1, 5))
+        self.add_skin("1-2", date(2026, 2, 5))
+        self.add_skin("1-3", date(2026, 3, 5))
+
+        releases, _ = get_release_revenue_timeline(
+            self.db_path,
+            period_start=date(2026, 1, 1),
+            period_end=date(2026, 2, 28),
+            online_from=date(2026, 2, 1),
+        )
+        self.assertEqual([row["source_key"] for row in releases], ["1-2"])
+
     def test_cash_not_injected_into_emotion(self):
         """A cash-derived sales_volume must never validate an emotion score."""
         self.add_skin("1-1", date(2026, 1, 1))
@@ -222,6 +236,28 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual(row.emotion_status, EmotionStatus.MISSING.value)
         self.assertIsNone(row.emotion_score)
         self.assertIsNone(row.perceived_value)
+
+    def test_partial_emotion_is_audit_only_in_detail(self):
+        """A sparse numeric score must not escape the validation gate."""
+        self.add_skin("1-1", date(2026, 1, 1))
+        self.save_cash("1-1", "manual_exact")
+        MarketSignalRepository(self.db_path).upsert_signals(
+            "1-1",
+            MarketValidationSignals(visual_score=80),
+            signal_source="partial-test",
+        )
+
+        detail = get_skin_detail(self.db_path, "1-1")
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail.evaluation["evaluation_score"], 80)
+        self.assertEqual(
+            detail.evaluation["validation_status"], "insufficient_market_evidence"
+        )
+        self.assertEqual(detail.aspect_scores, {})
+        self.assertIsNone(
+            detail.cash_value["metrics"]["emotional_value_efficiency_per_cny100"]
+        )
 
     def test_period_scoped_cash(self):
         """Only the cash record overlapping the selected period backs the KPI."""
@@ -288,6 +324,7 @@ class DashboardQueryTests(unittest.TestCase):
         releases, revenue = get_release_revenue_timeline(ghost)
         self.assertEqual(releases, [])
         self.assertEqual(revenue, [])
+        self.assertIsNone(get_skin_detail(ghost, "missing"))
         # Critically: no file was created by the read path.
         self.assertFalse(ghost.exists())
 
@@ -307,6 +344,7 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual(rows, [])
         releases, revenue = get_release_revenue_timeline(partial)
         self.assertEqual(releases, [])
+        self.assertIsNone(get_skin_detail(partial, "missing"))
         # The read path must not have created a skins table.
         conn = sqlite3.connect(partial)
         tables = {r[0] for r in conn.execute(

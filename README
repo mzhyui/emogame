@@ -1,8 +1,9 @@
 # EmoGame — Backlog
 
-> Prioritized, measurable backlog. Checked items have code + tests that verify
-> the stated outcome. Baseline snapshot 2026-07-17: 960 skins, 49 cash records,
-> 0 validated emotion rows, 365 revenue days.
+> Prioritized, measurable backlog. Checked items have code + tests or a dated
+> reconciliation report that verify the stated outcome. Current snapshot
+> 2026-09-02: 960 skins, 49 cash records, 0 validated emotion rows, 365 revenue
+> days, and 798 verified local image bindings.
 
 ## P0 — Dashboard correctness (2026-07-17 amendment)
 
@@ -11,7 +12,11 @@
 - [x] Validated emotion-score binding through the real `RuleEngine`
       (`validation_status == evidence_validated`, coverage ≥ 0.5). `emotion_score`
       and `perceived_value` populated only for validated rows; insufficient
-      results stay missing in KPIs, charts, and rankings.
+      results stay missing in headline metrics, radars, rankings, and
+      emotion-derived cash metrics. The raw numeric evaluation remains available
+      only in the detail audit object. (`test_partial_emotion_is_audit_only_in_detail`,
+      `test_detail_page_partial_numeric_score_stays_audit_only`,
+      `test_build_payload_keeps_partial_score_out_of_cash_metrics`)
 - [x] Cash / emotion separation: opinion-only signal read path
       (`MarketSignalRepository.get_opinion_signals`) never injects cash-derived
       `sales_volume` / `avg_spend_cny` into emotional evaluation.
@@ -22,34 +27,63 @@
 - [x] Native CNY included directly; USD excluded from the CNY aggregate but kept
       visible for audit. (`test_usd_excluded_from_cny_aggregate`)
 - [x] Release events plotted visibly on the revenue timeline (not just a caption).
+      Release dates and revenue now both respect `period_start` / `period_end`;
+      the optional online-date range is an additional intersection.
+      (`test_release_events_respect_analysis_and_online_periods`)
 - [x] Missing-last sorting (`dashboard.format.sort_missing_last`) and safe
       empty-result explorer (no enabled fallback selector/button on zero rows).
       (`test_explorer_zero_result_has_no_enabled_detail_button`)
 - [x] Missing/partial database fails closed: read paths never call `ensure_schema`
-      and never create files or tables. (`test_missing_db_fails_closed`,
-      `test_partial_db_no_skins_table`)
+      and never create files or tables. This covers overview, detail, timeline,
+      summary, evidence, cash, and market-signal reads; explicit import/write
+      paths retain schema initialization. (`test_missing_db_fails_closed`,
+      `test_partial_db_no_skins_table`,
+      `test_summary_and_evidence_reads_do_not_create_missing_db`)
 
 ## P1 — Metadata coverage
 
-> Baseline 2026-07-17. Enrichment acceptance is separate from UI binding.
+> Measured 2026-09-02. Enrichment acceptance is separate from UI binding; no
+> metadata backfill was performed in this change.
 
-- [ ] Quality: 831 / 960 skins lack quality → target measurable coverage %.
-- [ ] Online date: 326 / 960 skins lack an online date.
-- [ ] Acquisition method: 834 / 960 skins lack an acquisition method.
-- [ ] Official price text: 947 / 960 skins lack official price text.
+- [ ] Quality: 129 / 960 present (13.44%); 831 missing.
+- [ ] Online date: 634 / 960 present (66.04%); 326 missing.
+- [ ] Acquisition method: 126 / 960 present (13.13%); 834 missing.
+- [ ] Official price text: 13 / 960 present (1.35%); 947 missing.
 
-## P1 — Image coverage
+## P1 — Image coverage (reconciled 2026-09-02)
 
-- [ ] 154 skins have no image URL.
-- [ ] 806 primary assets are remote-only/skipped, not validated local downloads.
-- [ ] Track URL coverage, successful local download, and renderability as
-      separate completion criteria.
+- [x] Reconciled the existing cache by stable hero/skin identity only. Exactly
+      798 unambiguous images are Pillow render-verified, SHA-256 verified, bound
+      to both `skins.image_path` and the primary `skin_assets` row, and preferred
+      by the detail UI. Coverage is 798 / 960 skins (83.13%) and 798 / 806 URL
+      rows (99.01%). The default CLI remains dry-run; `--apply` creates a
+      SQLite-consistent backup and updates one transaction.
+- [ ] 154 / 960 skins have no image URL (URL coverage: 806 / 960, 83.96%).
+- [ ] Six URL-backed rows have no matching cached image.
+- [ ] Two duplicate `后羿 / 黄金射手座` database identities are ambiguous and
+      deliberately remain unbound; this workflow does not deduplicate them.
+- [x] URL coverage, verified local binding, renderability, unresolved reasons,
+      conflict preservation, and second-run idempotence have separate measurable
+      checks in `tests/test_image_reconciliation.py` and ignored JSON reports.
+
+## P1 — Perceived-premium radar
+
+- [x] Five-page dashboard embeds only the canonical
+      `20260831-seed42-social-v1` bundle after validating its HTML, `report.json`,
+      and `run_metadata.json`. It renders 50 rows: 46 complete and 4 partial.
+- [x] Premium scores stay artifact-backed and separate from
+      `market_signal_records`, RuleEngine emotion, and emotion-derived cash
+      metrics. Missing or inconsistent canonical artifacts produce an unavailable
+      state; the dashboard never substitutes the stale `partial-v3` run.
 
 ## P1 — Emotion evidence
 
 - [ ] Collect and persist sufficient aspect evidence before enabling rankings.
 - [ ] Do not describe official priors, cash-derived fields, or insufficient
       rule-engine results as validated emotional evidence.
+- [ ] Emotion ranking remains disabled while validated emotion coverage is
+      0 / 960. The separate 50-row perceived-premium pilot is not emotion
+      collection and does not close this item.
 
 ## P2 — Platform follow-ups
 
@@ -61,9 +95,12 @@
 
 ## Fixed assumptions
 
-- Four-page layout: portfolio overview, explorer, detail, separate data workbench.
+- Five-page layout: portfolio overview, explorer, detail, perceived-premium
+  radar, and separate data workbench.
 - Cash value, perceived value-for-money, and emotional score are independent
   measures — never fused into one "total value".
+- Perceived-premium pilot results remain a fourth, artifact-backed construct;
+  they are not written into emotion or market-signal tables.
 - Never replace missing values with zero or official metadata priors.
 
 

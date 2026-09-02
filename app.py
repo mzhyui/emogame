@@ -1,7 +1,7 @@
 """EmoGame 分析看板 — 组合总览入口 + Streamlit 多页导航。
 
-本文件是门户的默认入口（组合总览），并通过 ``st.navigation`` 挂载三个页面：
-``pages/皮肤探索.py``、``pages/皮肤详情.py``、``pages/数据工作台.py``。
+本文件是门户的默认入口（组合总览），并通过 ``st.navigation`` 挂载皮肤探索、
+皮肤详情、溢价雷达和数据工作台页面。
 
 兼容性红线：``build_payload``、``import_cash_value_upload``、``save_manual_cash_value``、
 ``load_signals``、``apply_calibration`` 等被现有测试直接 import，签名保持不变。
@@ -18,11 +18,18 @@ from pathlib import Path
 from typing import Any
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from business.sales_advisor import SalesAdvisor
+from dashboard.premium_radar import (
+    PremiumRadarBundle,
+    PremiumRadarBundleError,
+    load_premium_radar_bundle,
+)
 from data.cash_value import CashValueService
 from data.market_signal_repository import OFFICIAL_EVIDENCE_PLATFORMS, MarketSignalRepository
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository
+from data.sqlite_read import connect_readonly, table_exists
 from feature_engineering.features import MarketValidationSignals
 from feature_engineering.pipeline import FeatureBuilder
 from models.rule_engine import RuleEngine
@@ -32,6 +39,10 @@ from models.sales_deviation import compare_score_to_sales, sales_blind_signals
 
 CALIBRATION_MODEL_PATH = Path("outputs/sales_calibration_model.json")
 CALIBRATION_REPORT_PATH = Path("outputs/sales_calibration_report.json")
+PREMIUM_RADAR_RUN_DIR = (
+    Path(__file__).resolve().parent
+    / "data/premium_pilot/runs/20260831-seed42-social-v1"
+)
 
 ASPECT_LABELS = {
     "visual_appeal": "观感",
@@ -97,7 +108,6 @@ def dataset_summary(db_path: str, *, official_only: bool = True) -> dict[str, An
 
     skin_repo = SkinRepository(path)
     market_repo = MarketSignalRepository(path)
-    market_repo.ensure_schema()
     stats = skin_repo.stats()
     evidence_rows = all_evidence_rows(path, official_only=official_only)
     basis_counts = Counter(classify_sales_basis(row["metrics"]) for row in evidence_rows)
@@ -167,9 +177,13 @@ def all_evidence_rows(
     query += " ORDER BY collected_at DESC, evidence_id DESC LIMIT ?"
     params.append(limit)
 
-    with sqlite3.connect(db_path) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+    try:
+        with connect_readonly(db_path) as conn:
+            if not table_exists(conn, "opinion_evidence_items"):
+                return []
+            rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+    except sqlite3.Error:
+        return []
 
     for row in rows:
         row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
@@ -229,7 +243,11 @@ def build_payload(
 
     cash_value = CashValueService(db_path).cash_value(
         source_key,
-        evaluation_score=evaluation.evaluation_score,
+        evaluation_score=(
+            evaluation.evaluation_score
+            if evaluation.validation_status == "evidence_validated"
+            else None
+        ),
         legacy_signals=market_repo.get_signals(source_key),
     )
     # Surface cash-value as a low-priority sales-evidence candidate for the
@@ -360,6 +378,8 @@ def _display_percent(value: Any) -> str:
 
 
 def score_text(evaluation: dict[str, Any]) -> str:
+    if evaluation.get("validation_status") != "evidence_validated":
+        return "N/A"
     score = evaluation["evaluation_score"]
     return str(score) if score is not None else f"{evaluation['official_prior_score']} 先验"
 
@@ -385,6 +405,48 @@ def flatten_gap_evidence(gap: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── Streamlit multipage navigation ───────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def load_premium_radar_report(
+    run_dir: str, report_mtime_ns: int, metadata_mtime_ns: int, html_mtime_ns: int
+) -> PremiumRadarBundle:
+    """Load and validate the canonical bundle with all files in the cache key."""
+    del report_mtime_ns, metadata_mtime_ns, html_mtime_ns
+    return load_premium_radar_bundle(run_dir)
+
+
+def _premium_radar_panel() -> None:
+    """Render the frozen premium-pilot radar report in a scrollable panel."""
+    st.title("皮肤溢价雷达")
+    st.caption(
+        "感知溢价试点与 RuleEngine 情绪证据严格分离；收入仅作验证轴，"
+        "不参与溢价评分。可按英雄、皮肤或 source key 搜索。"
+    )
+
+    run_dir = PREMIUM_RADAR_RUN_DIR
+    required = [run_dir / name for name in ("report.json", "run_metadata.json", "radar_plots.html")]
+    if not all(path.is_file() for path in required):
+        st.error(f"规范溢价雷达包不可用：{run_dir}")
+        return
+    try:
+        bundle = load_premium_radar_report(
+            str(run_dir), *(path.stat().st_mtime_ns for path in required)
+        )
+    except (OSError, PremiumRadarBundleError) as exc:
+        st.error(f"规范溢价雷达包校验失败：{exc}")
+        return
+
+    st.caption(f"运行 ID：{bundle.run_id}")
+    metrics = st.columns(3)
+    metrics[0].metric("试点皮肤", bundle.selected)
+    metrics[1].metric("完整证据", bundle.complete)
+    metrics[2].metric("部分证据", bundle.partial)
+    components.html(
+        bundle.html,
+        height=1_300,
+        scrolling=True,
+    )
+
+
 def _portfolio_overview(db_path: str) -> None:
     """Default landing page: portfolio overview."""
     from dashboard import charts, filters
@@ -490,9 +552,10 @@ def main() -> None:
     overview = st.Page(lambda: _portfolio_overview(db_path), title="组合总览", icon="📊")
     explore = st.Page("pages/皮肤探索.py", title="皮肤探索", icon="🔍")
     detail = st.Page("pages/皮肤详情.py", title="皮肤详情", icon="🧬")
+    radar = st.Page(_premium_radar_panel, title="溢价雷达", icon="🕸️")
     workbench = st.Page("pages/数据工作台.py", title="数据工作台", icon="🛠️")
 
-    pg = st.navigation([overview, explore, detail, workbench])
+    pg = st.navigation([overview, explore, detail, radar, workbench])
     pg.run()
 
 

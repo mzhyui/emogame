@@ -422,7 +422,12 @@ def render_cash_value_tab(db_path: Path, source_key: str, payload: dict[str, Any
         view_start, view_end = view_period
         cash = CashValueService(db_path).cash_value(
             source_key, view_start.isoformat(), view_end.isoformat(),
-            evaluation_score=payload["evaluation"].get("evaluation_score"),
+            evaluation_score=(
+                payload["evaluation"].get("evaluation_score")
+                if payload["evaluation"].get("validation_status")
+                == "evidence_validated"
+                else None
+            ),
             legacy_signals=MarketSignalRepository(db_path).get_signals(source_key),
         )
     else:
@@ -452,7 +457,8 @@ def render_evaluation_tab(payload: dict[str, Any]) -> None:
 
     evaluation = payload["evaluation"]
     report = payload["sales_report"]
-    aspect_scores = evaluation["aspect_scores"]
+    validated = evaluation.get("validation_status") == "evidence_validated"
+    aspect_scores = evaluation["aspect_scores"] if validated else {}
     if any(score is not None for score in aspect_scores.values()):
         chart_data = {
             "维度": [ASPECT_LABELS.get(name, name) for name in aspect_scores],

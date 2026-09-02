@@ -12,6 +12,8 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from data.sqlite_read import connect_readonly, table_exists
+
 
 DEFAULT_DB_PATH = Path("data/wzry_skins/skins.sqlite3")
 
@@ -23,9 +25,7 @@ class SkinRepository:
         self.db_path = Path(db_path)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_readonly(self.db_path)
 
     @staticmethod
     def _rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -44,37 +44,70 @@ class SkinRepository:
 
     def stats(self) -> dict[str, int]:
         """Return high-level table and quality counts."""
-        with closing(self._connect()) as conn:
-            result = {
-                "heroes": conn.execute("SELECT count(*) FROM heroes").fetchone()[0],
-                "skins": conn.execute("SELECT count(*) FROM skins").fetchone()[0],
-                "assets": conn.execute("SELECT count(*) FROM skin_assets").fetchone()[0],
-                "with_detail": conn.execute(
-                    "SELECT count(*) FROM skins WHERE has_detail_record = 1"
-                ).fetchone()[0],
-                "missing_detail": conn.execute(
-                    "SELECT count(*) FROM skins WHERE has_detail_record = 0"
-                ).fetchone()[0],
-                "detail_only": conn.execute(
-                    "SELECT count(*) FROM skins WHERE catalog_source = 'detail_only'"
-                ).fetchone()[0],
-                "failed_assets": conn.execute(
-                    "SELECT count(*) FROM skin_assets WHERE download_status = 'failed'"
-                ).fetchone()[0],
-            }
-            result["missing_primary_asset"] = conn.execute(
-                """
-                SELECT count(*)
-                FROM skins s
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM skin_assets a
-                    WHERE a.source_key = s.source_key
-                      AND a.asset_type = 'skin_primary'
+        empty = {
+            "heroes": 0,
+            "skins": 0,
+            "assets": 0,
+            "with_detail": 0,
+            "missing_detail": 0,
+            "detail_only": 0,
+            "failed_assets": 0,
+            "missing_primary_asset": 0,
+        }
+        try:
+            with closing(self._connect()) as conn:
+                if not table_exists(conn, "skins"):
+                    return empty
+                has_heroes = table_exists(conn, "heroes")
+                has_assets = table_exists(conn, "skin_assets")
+                result = {
+                    "heroes": (
+                        conn.execute("SELECT count(*) FROM heroes").fetchone()[0]
+                        if has_heroes
+                        else 0
+                    ),
+                    "skins": conn.execute("SELECT count(*) FROM skins").fetchone()[0],
+                    "assets": (
+                        conn.execute("SELECT count(*) FROM skin_assets").fetchone()[0]
+                        if has_assets
+                        else 0
+                    ),
+                    "with_detail": conn.execute(
+                        "SELECT count(*) FROM skins WHERE has_detail_record = 1"
+                    ).fetchone()[0],
+                    "missing_detail": conn.execute(
+                        "SELECT count(*) FROM skins WHERE has_detail_record = 0"
+                    ).fetchone()[0],
+                    "detail_only": conn.execute(
+                        "SELECT count(*) FROM skins WHERE catalog_source = 'detail_only'"
+                    ).fetchone()[0],
+                    "failed_assets": (
+                        conn.execute(
+                            "SELECT count(*) FROM skin_assets WHERE download_status = 'failed'"
+                        ).fetchone()[0]
+                        if has_assets
+                        else 0
+                    ),
+                }
+                result["missing_primary_asset"] = (
+                    conn.execute(
+                        """
+                        SELECT count(*)
+                        FROM skins s
+                        WHERE NOT EXISTS (
+                            SELECT 1
+                            FROM skin_assets a
+                            WHERE a.source_key = s.source_key
+                              AND a.asset_type = 'skin_primary'
+                        )
+                        """
+                    ).fetchone()[0]
+                    if has_assets
+                    else result["skins"]
                 )
-                """
-            ).fetchone()[0]
-            return result
+                return result
+        except sqlite3.Error:
+            return empty
 
     def list_heroes(
         self,
@@ -105,8 +138,13 @@ class SkinRepository:
         suffix, suffix_params = self._limit_offset(limit, offset)
         query += suffix
 
-        with closing(self._connect()) as conn:
-            return self._rows(conn.execute(query, params + suffix_params))
+        try:
+            with closing(self._connect()) as conn:
+                if not table_exists(conn, "heroes"):
+                    return []
+                return self._rows(conn.execute(query, params + suffix_params))
+        except sqlite3.Error:
+            return []
 
     def list_skins(
         self,
@@ -170,29 +208,57 @@ class SkinRepository:
                 s.catalog_source,
                 s.detail_source,
                 s.has_detail_record,
-                primary_asset.remote_url AS primary_asset_url,
-                primary_asset.local_path AS primary_asset_path,
-                primary_asset.download_status AS primary_asset_status
+                {asset_columns}
             FROM skins s
-            LEFT JOIN skin_assets primary_asset
-              ON primary_asset.source_key = s.source_key
-             AND primary_asset.asset_type = 'skin_primary'
+            {asset_join}
         """
-        if where:
-            query += " WHERE " + " AND ".join(where)
-        query += " ORDER BY s.source_index, s.hero_id, s.skin_index"
-        suffix, suffix_params = self._limit_offset(limit, offset)
-        query += suffix
-
-        with closing(self._connect()) as conn:
-            return self._rows(conn.execute(query, params + suffix_params))
+        try:
+            with closing(self._connect()) as conn:
+                if not table_exists(conn, "skins"):
+                    return []
+                has_assets = table_exists(conn, "skin_assets")
+                if require_primary_asset is True and not has_assets:
+                    return []
+                if require_primary_asset is False and not has_assets:
+                    where = [item for item in where if not item.startswith("primary_asset.")]
+                rendered_query = query.format(
+                    asset_columns=(
+                        "primary_asset.remote_url AS primary_asset_url, "
+                        "primary_asset.local_path AS primary_asset_path, "
+                        "primary_asset.download_status AS primary_asset_status"
+                        if has_assets
+                        else (
+                            "NULL AS primary_asset_url, NULL AS primary_asset_path, "
+                            "NULL AS primary_asset_status"
+                        )
+                    ),
+                    asset_join=(
+                        "LEFT JOIN skin_assets primary_asset "
+                        "ON primary_asset.source_key = s.source_key "
+                        "AND primary_asset.asset_type = 'skin_primary'"
+                        if has_assets
+                        else ""
+                    ),
+                )
+                if where:
+                    rendered_query += " WHERE " + " AND ".join(where)
+                rendered_query += " ORDER BY s.source_index, s.hero_id, s.skin_index"
+                suffix, suffix_params = self._limit_offset(limit, offset)
+                rendered_query += suffix
+                return self._rows(
+                    conn.execute(rendered_query, params + suffix_params)
+                )
+        except sqlite3.Error:
+            return []
 
     def get_skin(self, source_key: str) -> dict[str, Any] | None:
         """Fetch one skin by internal source key."""
-        with closing(self._connect()) as conn:
-            return self._row(
-                conn.execute(
-                    """
+        try:
+            with closing(self._connect()) as conn:
+                if not table_exists(conn, "skins"):
+                    return None
+                has_assets = table_exists(conn, "skin_assets")
+                query = """
                     SELECT
                         s.source_key,
                         s.source_index,
@@ -214,18 +280,32 @@ class SkinRepository:
                         s.catalog_source,
                         s.detail_source,
                         s.has_detail_record,
-                        primary_asset.remote_url AS primary_asset_url,
-                        primary_asset.local_path AS primary_asset_path,
-                        primary_asset.download_status AS primary_asset_status
+                        {asset_columns}
                     FROM skins s
-                    LEFT JOIN skin_assets primary_asset
-                      ON primary_asset.source_key = s.source_key
-                     AND primary_asset.asset_type = 'skin_primary'
+                    {asset_join}
                     WHERE s.source_key = ?
-                    """,
-                    (source_key,),
+                """.format(
+                    asset_columns=(
+                        "primary_asset.remote_url AS primary_asset_url, "
+                        "primary_asset.local_path AS primary_asset_path, "
+                        "primary_asset.download_status AS primary_asset_status"
+                        if has_assets
+                        else (
+                            "NULL AS primary_asset_url, NULL AS primary_asset_path, "
+                            "NULL AS primary_asset_status"
+                        )
+                    ),
+                    asset_join=(
+                        "LEFT JOIN skin_assets primary_asset "
+                        "ON primary_asset.source_key = s.source_key "
+                        "AND primary_asset.asset_type = 'skin_primary'"
+                        if has_assets
+                        else ""
+                    ),
                 )
-            )
+                return self._row(conn.execute(query, (source_key,)))
+        except sqlite3.Error:
+            return None
 
     def search_skins(self, query: str, *, limit: int = 20) -> list[dict[str, Any]]:
         """Search by hero name, skin name, or skin id."""
@@ -233,9 +313,11 @@ class SkinRepository:
 
     def list_assets(self, source_key: str) -> list[dict[str, Any]]:
         """List image and icon assets for a skin."""
-        with closing(self._connect()) as conn:
-            return self._rows(
-                conn.execute(
+        try:
+            with closing(self._connect()) as conn:
+                if not table_exists(conn, "skin_assets"):
+                    return []
+                return self._rows(conn.execute(
                     """
                     SELECT asset_id, source_key, asset_type, remote_url, local_path,
                            content_hash, download_status, error, updated_at
@@ -244,8 +326,9 @@ class SkinRepository:
                     ORDER BY asset_type
                     """,
                     (source_key,),
-                )
-            )
+                ))
+        except sqlite3.Error:
+            return []
 
     def missing_detail_skins(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Skins from the catalog baseline without a matching detail record."""
@@ -258,9 +341,11 @@ class SkinRepository:
     def failed_assets(self, *, limit: int = 20) -> list[dict[str, Any]]:
         """Asset downloads that failed in the last local collection."""
         suffix, params = self._limit_offset(limit)
-        with closing(self._connect()) as conn:
-            return self._rows(
-                conn.execute(
+        try:
+            with closing(self._connect()) as conn:
+                if not table_exists(conn, "skin_assets"):
+                    return []
+                return self._rows(conn.execute(
                     """
                     SELECT asset_id, source_key, asset_type, remote_url, error, updated_at
                     FROM skin_assets
@@ -268,5 +353,6 @@ class SkinRepository:
                     ORDER BY updated_at DESC, asset_id
                     """ + suffix,
                     params,
-                )
-            )
+                ))
+        except sqlite3.Error:
+            return []

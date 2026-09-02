@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository
+from data.sqlite_read import connect_readonly, table_exists
 from feature_engineering.pipeline import quality_to_tier
 
 
@@ -45,6 +46,9 @@ class CashValueRepository:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _read_connect(self) -> sqlite3.Connection:
+        return connect_readonly(self.db_path)
 
     def ensure_schema(self) -> None:
         with closing(self._connect()) as conn:
@@ -263,15 +267,20 @@ class CashValueRepository:
         return self.get_record(int(row["value_id"]))
 
     def get_record(self, value_id: int) -> dict[str, Any]:
-        self.ensure_schema()
-        with closing(self._connect()) as conn:
-            row = conn.execute("SELECT * FROM skin_value_records WHERE value_id=?", (value_id,)).fetchone()
+        try:
+            with closing(self._read_connect()) as conn:
+                if not table_exists(conn, "skin_value_records"):
+                    raise ValueError(f"value record not found: {value_id}")
+                row = conn.execute(
+                    "SELECT * FROM skin_value_records WHERE value_id=?", (value_id,)
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ValueError(f"value record not found: {value_id}") from exc
         if not row:
             raise ValueError(f"value record not found: {value_id}")
         return _decode_record(dict(row))
 
     def list_records(self, source_key: str, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
-        self.ensure_schema()
         where = ["source_key = ?"]
         params: list[Any] = [source_key]
         if start:
@@ -282,11 +291,16 @@ class CashValueRepository:
             end = _iso_date(end, "end")
             where.append("period_start <= ?")
             params.append(end)
-        with closing(self._connect()) as conn:
-            rows = conn.execute(
-                f"SELECT * FROM skin_value_records WHERE {' AND '.join(where)} "
-                "ORDER BY period_start DESC, value_id DESC", params,
-            ).fetchall()
+        try:
+            with closing(self._read_connect()) as conn:
+                if not table_exists(conn, "skin_value_records"):
+                    return []
+                rows = conn.execute(
+                    f"SELECT * FROM skin_value_records WHERE {' AND '.join(where)} "
+                    "ORDER BY period_start DESC, value_id DESC", params,
+                ).fetchall()
+        except sqlite3.Error:
+            return []
         return [_decode_record(dict(row)) for row in rows]
 
     def resolve(self, source_key: str, start: str | None = None, end: str | None = None) -> dict[str, Any] | None:
@@ -317,14 +331,18 @@ class CashValueRepository:
         return min(records, key=lambda row: (priorities[row["attribution_method"]], -row["value_id"]))
 
     def revenue_rows(self, start: str, end: str, *, game: str = "王者荣耀", platform: str = "iPhone") -> list[dict[str, Any]]:
-        self.ensure_schema()
-        with closing(self._connect()) as conn:
-            rows = conn.execute(
-                """SELECT revenue_date, estimated_revenue, currency, source, import_batch
-                   FROM app_revenue_daily WHERE game=? AND platform=?
-                   AND revenue_date BETWEEN ? AND ? ORDER BY revenue_date""",
-                (game, platform, start, end),
-            ).fetchall()
+        try:
+            with closing(self._read_connect()) as conn:
+                if not table_exists(conn, "app_revenue_daily"):
+                    return []
+                rows = conn.execute(
+                    """SELECT revenue_date, estimated_revenue, currency, source, import_batch
+                       FROM app_revenue_daily WHERE game=? AND platform=?
+                       AND revenue_date BETWEEN ? AND ? ORDER BY revenue_date""",
+                    (game, platform, start, end),
+                ).fetchall()
+        except sqlite3.Error:
+            return []
         return [dict(row) for row in rows]
 
 

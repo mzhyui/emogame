@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+from dashboard.models import SkinDashboardDetail
 from data.skin_repository import DEFAULT_DB_PATH
 
 DB_PRESENT = Path(DEFAULT_DB_PATH).exists()
@@ -65,6 +67,37 @@ class DashboardPageRenderTests(unittest.TestCase):
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         warnings = " ".join(w.value for w in at.warning)
         self.assertIn("无法给出综合情绪分", warnings)
+
+    def test_detail_page_partial_numeric_score_stays_audit_only(self):
+        """A numeric but insufficient result must render as N/A publicly."""
+        detail = SkinDashboardDetail(
+            source_key="partial",
+            skin={"hero_name": "测试英雄", "skin_name": "部分证据"},
+            evaluation={
+                "evaluation_score": 80,
+                "validation_status": "insufficient_market_evidence",
+                "evidence_coverage": 0.31,
+                "confidence": 0.52,
+                "official_prior_score": 25,
+                "aspect_scores": {"visual_appeal": 80},
+            },
+            aspect_scores={},
+            cash_value={},
+            sales_gap={},
+            sales_report={},
+            evidence_items=[],
+        )
+        with patch("dashboard.query.get_skin_detail", return_value=detail):
+            at = AppTest.from_file("pages/皮肤详情.py")
+            at.session_state["dash_selected_source_key"] = "partial"
+            at.run(timeout=30)
+        self.assertFalse(at.exception, f"detail raised: {at.exception}")
+        metrics = {metric.label: metric.value for metric in at.metric}
+        self.assertEqual(metrics["综合情绪分"], "N/A")
+        self.assertEqual(metrics["证据覆盖"], "N/A")
+        self.assertEqual(metrics["置信度"], "N/A")
+        self.assertEqual(metrics["性价比 (value_for_money)"], "N/A")
+        self.assertFalse(at.get("plotly_chart"))
 
     def test_workbench_page_no_import_error(self):
         """Regresses defect #1: the workbench must not raise ImportError from a

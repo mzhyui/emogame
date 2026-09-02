@@ -68,6 +68,17 @@ class MarketSignalRepositoryTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_read_methods_do_not_initialize_missing_database(self):
+        ghost = Path(self.tmp.name) / "ghost.sqlite3"
+        repo = MarketSignalRepository(ghost)
+        self.assertEqual(repo.get_signals("missing").model_dump(exclude_none=True), {})
+        self.assertEqual(
+            repo.get_opinion_signals("missing").model_dump(exclude_none=True), {}
+        )
+        self.assertEqual(repo.list_evidence("missing"), [])
+        self.assertEqual(repo.list_source_keys_with_sales_evidence(), [])
+        self.assertFalse(ghost.exists())
+
     def test_extract_bvid(self):
         self.assertEqual(extract_bvid("https://www.bilibili.com/video/BV1xx411c7mD"), "BV1xx411c7mD")
         self.assertEqual(extract_bvid("BV1xx411c7mD"), "BV1xx411c7mD")

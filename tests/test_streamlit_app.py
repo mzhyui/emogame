@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app import build_payload
+from app import all_evidence_rows, build_payload, dataset_summary
 from crawlers.wzry_skin_crawler import AssetRecord, HeroRecord, SkinRecord, ensure_schema
 from crawlers.wzry_skin_crawler import save_asset, save_hero, save_skin
 from feature_engineering.features import MarketValidationSignals
@@ -93,6 +93,31 @@ class StreamlitAppHelperTest(unittest.TestCase):
         self.assertIn("sales_report", payload)
         self.assertIn("evaluation", payload)
         self.assertIn("sales_gap", payload)
+
+    def test_summary_and_evidence_reads_do_not_create_missing_db(self):
+        ghost = Path(self.tmp.name) / "ghost.sqlite3"
+        summary = dataset_summary(str(ghost))
+        self.assertEqual(summary["skins"], 0)
+        self.assertEqual(summary["sales_evidence_items"], 0)
+        self.assertEqual(all_evidence_rows(ghost), [])
+        self.assertFalse(ghost.exists())
+
+    def test_summary_and_evidence_reads_do_not_expand_partial_db(self):
+        partial = Path(self.tmp.name) / "partial.sqlite3"
+        with sqlite3.connect(partial) as conn:
+            conn.execute("CREATE TABLE unrelated (id INTEGER PRIMARY KEY)")
+        summary = dataset_summary(str(partial))
+        self.assertEqual(summary["skins"], 0)
+        self.assertEqual(summary["sales_evidence_items"], 0)
+        self.assertEqual(all_evidence_rows(partial), [])
+        with sqlite3.connect(partial) as conn:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+        self.assertEqual(tables, {"unrelated"})
 
 
 if __name__ == "__main__":

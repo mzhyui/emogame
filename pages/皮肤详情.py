@@ -57,9 +57,9 @@ def main() -> None:
     meta_cols[2].metric("获取方式", skin.get("acquire_method") or "—")
     meta_cols[3].metric("官方价格文本", skin.get("price_text") or "—")
 
-    img_url = skin.get("primary_asset_url") or skin.get("image_url")
-    if img_url:
-        st.image(img_url, width=220)
+    image_source = _image_source(skin)
+    if image_source:
+        st.image(image_source, width=220)
 
     evaluation = detail.evaluation or {}
     validation_status = evaluation.get("validation_status", "insufficient_market_evidence")
@@ -76,10 +76,18 @@ def main() -> None:
             f"{validation_status}），无法给出综合情绪分。仅保留原始评估供审计。"
         )
     ecols = st.columns(4)
-    ecols[0].metric("综合情绪分", display_number(evaluation.get("evaluation_score")))
+    ecols[0].metric(
+        "综合情绪分",
+        display_number(evaluation.get("evaluation_score") if validated else None),
+    )
     ecols[1].metric("验证状态", emotion_status_label("validated" if validated else "missing"))
-    ecols[2].metric("证据覆盖", display_number(evaluation.get("evidence_coverage")))
-    ecols[3].metric("置信度", display_number(evaluation.get("confidence")))
+    ecols[2].metric(
+        "证据覆盖",
+        display_number(evaluation.get("evidence_coverage") if validated else None),
+    )
+    ecols[3].metric(
+        "置信度", display_number(evaluation.get("confidence") if validated else None)
+    )
     st.caption(
         "情绪分只来自持久化市场信号经 RuleEngine 计算的 evaluation_score；"
         f"官方先验分 {display_number(evaluation.get('official_prior_score'))} 仅作标签，不进入排名。"
@@ -106,6 +114,18 @@ def main() -> None:
     components.render_audit_block("评分与销售偏差 / 业务建议（原始数据）", _audit_payload(detail), source_key)
     with st.expander("证据明细（可审计）"):
         st.json(detail.evidence_items)
+
+
+def _image_source(skin: dict) -> str | None:
+    """Prefer a valid local binding, falling back to the remote URL."""
+    raw_path = skin.get("primary_asset_path") or skin.get("image_path")
+    if raw_path:
+        path = Path(str(raw_path))
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[1] / path
+        if path.is_file():
+            return str(path)
+    return skin.get("primary_asset_url") or skin.get("image_url") or None
 
 
 def _render_cash(detail) -> None:

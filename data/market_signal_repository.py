@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from data.skin_repository import DEFAULT_DB_PATH
+from data.sqlite_read import connect_readonly, table_exists
 from feature_engineering.features import MarketValidationSignals
 
 
@@ -53,6 +54,9 @@ class MarketSignalRepository:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _read_connect(self) -> sqlite3.Connection:
+        return connect_readonly(self.db_path)
 
     @staticmethod
     def _rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:
@@ -243,19 +247,23 @@ class MarketSignalRepository:
         Cash-value records remain separate auditable facts; this method only
         projects the highest-priority record onto the legacy public model.
         """
-        self.ensure_schema()
-        with closing(self._connect()) as conn:
-            row = conn.execute(
-                """
-                SELECT visual_score, feel_score, craftsmanship_score, collection_score,
-                       value_score, purchase_intent_score, sentiment_score,
-                       discussion_count, video_views, marketing_volume, sales_volume,
-                       avg_spend_to_obtain, ownership_rate
-                FROM market_signal_records
-                WHERE source_key = ?
-                """,
-                (source_key,),
-            ).fetchone()
+        row = None
+        try:
+            with closing(self._read_connect()) as conn:
+                if table_exists(conn, "market_signal_records"):
+                    row = conn.execute(
+                        """
+                        SELECT visual_score, feel_score, craftsmanship_score, collection_score,
+                               value_score, purchase_intent_score, sentiment_score,
+                               discussion_count, video_views, marketing_volume, sales_volume,
+                               avg_spend_to_obtain, ownership_rate
+                        FROM market_signal_records
+                        WHERE source_key = ?
+                        """,
+                        (source_key,),
+                    ).fetchone()
+        except sqlite3.Error:
+            row = None
         values = dict(row) if row else {}
         # Import lazily to avoid coupling the base schema module to attribution.
         from data.cash_value import CashValueRepository
@@ -280,7 +288,9 @@ class MarketSignalRepository:
         partial database is never silently created from a read.
         """
         try:
-            with closing(self._connect()) as conn:
+            with closing(self._read_connect()) as conn:
+                if not table_exists(conn, "market_signal_records"):
+                    return MarketValidationSignals()
                 row = conn.execute(
                     """
                     SELECT visual_score, feel_score, craftsmanship_score, collection_score,
@@ -292,23 +302,24 @@ class MarketSignalRepository:
                     """,
                     (source_key,),
                 ).fetchone()
-        except sqlite3.OperationalError:
+        except sqlite3.Error:
             return MarketValidationSignals()
         if row is None:
             return MarketValidationSignals()
         return MarketValidationSignals.from_dict(dict(row))
 
     def list_evidence(self, source_key: str, *, official_only: bool = False) -> list[dict[str, Any]]:
-        self.ensure_schema()
         where = ["source_key = ?"]
         params: list[Any] = [source_key]
         if official_only:
             placeholders = ", ".join("?" for _ in OFFICIAL_EVIDENCE_PLATFORMS)
             where.append(f"platform IN ({placeholders})")
             params.extend(OFFICIAL_EVIDENCE_PLATFORMS)
-        with closing(self._connect()) as conn:
-            rows = self._rows(
-                conn.execute(
+        try:
+            with closing(self._read_connect()) as conn:
+                if not table_exists(conn, "opinion_evidence_items"):
+                    return []
+                rows = self._rows(conn.execute(
                     f"""
                     SELECT evidence_id, source_key, platform, external_id, url, title,
                            author, published_at, text, metrics_json, aspect_tags,
@@ -318,8 +329,9 @@ class MarketSignalRepository:
                     ORDER BY collected_at DESC, evidence_id DESC
                     """,
                     params,
-                )
-            )
+                ))
+        except sqlite3.Error:
+            return []
         for row in rows:
             row["metrics"] = json.loads(row.pop("metrics_json") or "{}")
             row["aspect_tags"] = json.loads(row["aspect_tags"] or "[]")
@@ -394,43 +406,60 @@ class MarketSignalRepository:
 
     def list_source_keys_with_sales_evidence(self, *, official_only: bool = False) -> list[str]:
         """Return skins that have any sales-like aggregate or evidence metric."""
-        self.ensure_schema()
         evidence_sales_clause = " OR ".join("metrics_json LIKE ?" for _ in SALES_EVIDENCE_PATTERNS)
-        with closing(self._connect()) as conn:
-            if official_only:
-                placeholders = ", ".join("?" for _ in OFFICIAL_EVIDENCE_PLATFORMS)
-                rows = self._rows(
-                    conn.execute(
-                        f"""
-                        SELECT DISTINCT source_key
-                        FROM opinion_evidence_items
-                        WHERE platform IN ({placeholders})
-                          AND ({evidence_sales_clause})
-                        ORDER BY source_key
-                        """,
-                        [*OFFICIAL_EVIDENCE_PLATFORMS, *SALES_EVIDENCE_PATTERNS],
+        try:
+            with closing(self._read_connect()) as conn:
+                has_evidence = table_exists(conn, "opinion_evidence_items")
+                has_signals = table_exists(conn, "market_signal_records")
+                if official_only:
+                    if not has_evidence:
+                        return []
+                    placeholders = ", ".join(
+                        "?" for _ in OFFICIAL_EVIDENCE_PLATFORMS
                     )
-                )
-                return [str(row["source_key"]) for row in rows]
+                    rows = self._rows(
+                        conn.execute(
+                            f"""
+                            SELECT DISTINCT source_key
+                            FROM opinion_evidence_items
+                            WHERE platform IN ({placeholders})
+                              AND ({evidence_sales_clause})
+                            ORDER BY source_key
+                            """,
+                            [*OFFICIAL_EVIDENCE_PLATFORMS, *SALES_EVIDENCE_PATTERNS],
+                        )
+                    )
+                    return [str(row["source_key"]) for row in rows]
 
-            rows = self._rows(
-                conn.execute(
-                    f"""
-                    SELECT source_key
-                    FROM market_signal_records
-                    WHERE sales_volume IS NOT NULL
-                       OR avg_spend_to_obtain IS NOT NULL
-                       OR ownership_rate IS NOT NULL
-                    UNION
-                    SELECT source_key
-                    FROM opinion_evidence_items
-                    WHERE {evidence_sales_clause}
-                    ORDER BY source_key
-                    """,
-                    SALES_EVIDENCE_PATTERNS,
-                )
-            )
-        return [str(row["source_key"]) for row in rows]
+                source_keys: set[str] = set()
+                if has_signals:
+                    source_keys.update(
+                        str(row["source_key"])
+                        for row in conn.execute(
+                            """
+                            SELECT source_key
+                            FROM market_signal_records
+                            WHERE sales_volume IS NOT NULL
+                               OR avg_spend_to_obtain IS NOT NULL
+                               OR ownership_rate IS NOT NULL
+                            """
+                        ).fetchall()
+                    )
+                if has_evidence:
+                    source_keys.update(
+                        str(row["source_key"])
+                        for row in conn.execute(
+                            f"""
+                            SELECT source_key
+                            FROM opinion_evidence_items
+                            WHERE {evidence_sales_clause}
+                            """,
+                            SALES_EVIDENCE_PATTERNS,
+                        ).fetchall()
+                    )
+        except sqlite3.Error:
+            return []
+        return sorted(source_keys)
 
     def _set_evidence_count(self, source_key: str, evidence_count: int) -> None:
         now = time.strftime("%Y-%m-%d %H:%M:%S")

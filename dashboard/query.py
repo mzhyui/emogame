@@ -27,6 +27,7 @@ from dashboard.models import (
 from data.cash_value import CashValueRepository, CashValueService
 from data.market_signal_repository import MarketSignalRepository
 from data.skin_repository import SkinRepository
+from data.sqlite_read import connect_readonly, table_exists
 from feature_engineering.pipeline import FeatureBuilder
 from models.rule_engine import RuleEngine
 
@@ -54,7 +55,7 @@ def default_period(db_path: str | Path) -> tuple[date, date]:
             parsed = _safe_date(row[0])
             if parsed is not None:
                 end = parsed
-    except sqlite3.OperationalError:
+    except sqlite3.Error:
         pass
     except Exception:
         pass
@@ -90,10 +91,10 @@ def _batch_cash(
     if not Path(db_path).exists():
         return {}
     repo = CashValueRepository(db_path)
-    with _connect_readonly(repo) as conn:
-        if not _table_exists(conn, "skin_value_records"):
-            return {}
-        try:
+    try:
+        with _connect_readonly(repo) as conn:
+            if not _table_exists(conn, "skin_value_records"):
+                return {}
             rows = conn.execute(
                 """
                 SELECT value_id, source_key, sales_volume, volume_relation,
@@ -103,8 +104,8 @@ def _batch_cash(
                 ORDER BY source_key, value_id DESC
                 """
             ).fetchall()
-        except sqlite3.OperationalError:
-            return {}
+    except sqlite3.Error:
+        return {}
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[row["source_key"]].append(dict(row))
@@ -142,15 +143,15 @@ def _batch_emotion_evaluations(
     if not Path(db_path).exists():
         return {}
     signal_repo = MarketSignalRepository(db_path)
-    with _connect_readonly(signal_repo) as conn:
-        if not _table_exists(conn, "market_signal_records"):
-            return {}
-        try:
+    try:
+        with _connect_readonly(signal_repo) as conn:
+            if not _table_exists(conn, "market_signal_records"):
+                return {}
             rows = conn.execute(
                 "SELECT source_key FROM market_signal_records"
             ).fetchall()
-        except sqlite3.OperationalError:
-            return {}
+    except sqlite3.Error:
+        return {}
     keys = [row["source_key"] for row in rows]
     if not keys:
         return {}
@@ -190,9 +191,12 @@ def get_portfolio_rows(
         return []
 
     repo = SkinRepository(db_path)
-    with _connect_readonly(repo) as conn:
-        if not _table_exists(conn, "skins"):
-            return []
+    try:
+        with _connect_readonly(repo) as conn:
+            if not _table_exists(conn, "skins"):
+                return []
+    except sqlite3.Error:
+        return []
     skins = repo.list_skins(
         search=search or None,
         quality=quality,
@@ -343,18 +347,22 @@ def get_release_revenue_timeline(
         return releases, revenue
 
     repo = SkinRepository(db_path)
-    with _connect_readonly(repo) as conn:  # type: ignore[arg-type]
-        if not _table_exists(conn, "skins"):
-            return releases, revenue
-        try:
+    try:
+        with _connect_readonly(repo) as conn:  # type: ignore[arg-type]
+            if not _table_exists(conn, "skins"):
+                return releases, revenue
             rows = conn.execute(
                 "SELECT source_key, hero_name, skin_name, online_date FROM skins"
             ).fetchall()
-        except sqlite3.OperationalError:
-            return releases, revenue
+    except sqlite3.Error:
+        return releases, revenue
     for row in rows:
         d = _safe_date(row["online_date"])
         if d is None:
+            continue
+        if period_start and d < period_start:
+            continue
+        if period_end and d > period_end:
             continue
         if online_from and d < online_from:
             continue
@@ -392,6 +400,8 @@ def get_skin_detail(
     from feature_engineering.pipeline import FeatureBuilder
     from models.rule_engine import RuleEngine
 
+    if not Path(db_path).is_file():
+        return None
     skin = SkinRepository(db_path).get_skin(source_key)
     if skin is None:
         return None
@@ -406,7 +416,8 @@ def get_skin_detail(
         features = FeatureBuilder(SkinRepository(db_path)).build(source_key, signals)
         result = RuleEngine().evaluate(features)
         evaluation = result.to_dict()
-        aspect_scores = evaluation.get("aspect_scores", {})
+        if result.validation_status == "evidence_validated":
+            aspect_scores = evaluation.get("aspect_scores", {})
     except Exception:
         evaluation = None
 
@@ -420,7 +431,11 @@ def get_skin_detail(
     try:
         cv = CashValueService(db_path).cash_value(
             source_key, start, end,
-            evaluation_score=(evaluation or {}).get("evaluation_score"),
+            evaluation_score=(
+                (evaluation or {}).get("evaluation_score")
+                if (evaluation or {}).get("validation_status") == "evidence_validated"
+                else None
+            ),
             legacy_signals=signal_repo.get_signals(source_key),
         )
         cash_value = cv
@@ -454,7 +469,7 @@ def _safe_date(text: Any) -> date | None:
 
 def _connect_readonly(repo: Any):
     """Yield a read connection from an existing repository instance."""
-    return repo._connect()
+    return connect_readonly(repo.db_path)
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -465,9 +480,6 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     the missing table implicitly via a write. Never raises on a missing table.
     """
     try:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone()
-        return row is not None
-    except sqlite3.OperationalError:
+        return table_exists(conn, table)
+    except sqlite3.Error:
         return False

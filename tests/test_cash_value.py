@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from api.main import app
-from app import build_payload, import_cash_value_upload
+from app import build_payload, import_cash_value_upload, score_text
 from crawlers.wzry_skin_crawler import HeroRecord, SkinRecord, ensure_schema, save_hero, save_skin
 from data.cash_value import CashValueRepository, CashValueService
 from data.market_signal_repository import MarketSignalRepository
@@ -33,6 +33,45 @@ class CashValueTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_read_methods_do_not_initialize_missing_database(self):
+        ghost = Path(self.tmp.name) / "ghost.sqlite3"
+        repo = CashValueRepository(ghost)
+        self.assertEqual(repo.list_records("missing"), [])
+        self.assertEqual(repo.revenue_rows("2026-01-01", "2026-01-31"), [])
+        with self.assertRaisesRegex(ValueError, "not found"):
+            repo.get_record(1)
+        self.assertFalse(ghost.exists())
+
+    def test_build_payload_keeps_partial_score_out_of_cash_metrics(self):
+        self.add_skin("1-1", date(2026, 1, 1))
+        CashValueRepository(self.db_path).save_manual_record(
+            "1-1",
+            {
+                "period_start": "2026-01-01",
+                "period_end": "2026-01-31",
+                "sales_volume": 10,
+                "volume_relation": "exact",
+                "avg_spend": 88.8,
+                "currency": "CNY",
+            },
+        )
+        payload = build_payload(
+            self.db_path,
+            "1-1",
+            MarketValidationSignals(visual_score=80),
+        )
+        evaluation = payload["evaluation"]
+        self.assertEqual(evaluation["evaluation_score"], 80)
+        self.assertEqual(
+            evaluation["validation_status"], "insufficient_market_evidence"
+        )
+        self.assertEqual(score_text(evaluation), "N/A")
+        self.assertIsNone(
+            payload["sales_report"]["cash_value"]["metrics"][
+                "emotional_value_efficiency_per_cny100"
+            ]
+        )
 
     def add_skin(self, key: str, release: date, *, quality: str = "史诗", acquire: str = "商城直售获取",
                  price: str | None = "888点券") -> None:
