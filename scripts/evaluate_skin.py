@@ -15,9 +15,11 @@ if str(ROOT) not in sys.path:
 
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository  # noqa: E402
 from data.market_signal_repository import MarketSignalRepository  # noqa: E402
+from data.emotion_evidence_repository import EmotionEvidenceRepository  # noqa: E402
 from feature_engineering.features import MarketValidationSignals  # noqa: E402
 from feature_engineering.pipeline import FeatureBuilder  # noqa: E402
 from models.rule_engine import RuleEngine  # noqa: E402
+from models.emotion_evidence import signal_values_from_profile  # noqa: E402
 
 
 def load_signal_payload(path: Path | None, source_key: str | None) -> dict[str, Any]:
@@ -97,14 +99,24 @@ def main() -> int:
     repo = SkinRepository(args.db)
     try:
         source_key = resolve_source_key(repo, args.source_key, args.search)
+        qualification = None
         if args.signals_json:
             signals = MarketValidationSignals.from_dict(load_signal_payload(args.signals_json, source_key))
         elif args.ignore_db_signals:
             signals = MarketValidationSignals()
         else:
-            signals = MarketSignalRepository(args.db).get_signals(source_key)
+            qualification = EmotionEvidenceRepository(
+                args.db
+            ).latest_published_profile(source_key)
+            signals = (
+                MarketValidationSignals.from_dict(
+                    signal_values_from_profile(qualification)
+                )
+                if qualification
+                else MarketSignalRepository(args.db).get_opinion_signals(source_key)
+            )
         features = FeatureBuilder(repo).build(source_key, signals)
-        result = RuleEngine().evaluate(features).to_dict()
+        result = RuleEngine().evaluate(features, qualification).to_dict()
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1

@@ -10,10 +10,12 @@ from pydantic import BaseModel
 
 from business.sales_advisor import SalesAdvisor
 from data.cash_value import CashValueService
+from data.emotion_evidence_repository import EmotionEvidenceRepository
 from data.market_signal_repository import MarketSignalRepository
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository
 from feature_engineering.features import MarketValidationSignals
 from feature_engineering.pipeline import FeatureBuilder
+from models.emotion_evidence import signal_values_from_profile
 from models.rule_engine import RuleEngine
 from models.sales_deviation import compare_score_to_sales, sales_blind_signals
 
@@ -71,14 +73,22 @@ def build_features_and_evaluation(
 ) -> tuple[Any, Any]:
     repo = repo_or_404(db_path)
     source_key = resolve_source_key(repo, request)
+    qualification = None
     if request.signals is not None:
         signals = MarketValidationSignals.from_dict(request.signals)
     elif request.ignore_db_signals:
         signals = MarketValidationSignals()
     else:
-        signals = MarketSignalRepository(db_path).get_signals(source_key)
+        qualification = EmotionEvidenceRepository(db_path).latest_published_profile(
+            source_key
+        )
+        signals = (
+            MarketValidationSignals.from_dict(signal_values_from_profile(qualification))
+            if qualification
+            else MarketSignalRepository(db_path).get_opinion_signals(source_key)
+        )
     features = FeatureBuilder(repo).build(source_key, signals)
-    evaluation = RuleEngine().evaluate(features)
+    evaluation = RuleEngine().evaluate(features, qualification)
     return features, evaluation
 
 
@@ -124,7 +134,11 @@ def sales_report(
     db_signals = MarketSignalRepository(Path(db)).get_signals(features.source_key)
     report_payload["cash_value"] = CashValueService(Path(db)).cash_value(
         features.source_key,
-        evaluation_score=evaluation.evaluation_score,
+        evaluation_score=(
+            evaluation.evaluation_score
+            if evaluation.validation_status == "evidence_validated"
+            else None
+        ),
         legacy_signals=db_signals,
     )
     return {
@@ -160,7 +174,11 @@ def sales_gap(
     )
     cash_value = CashValueService(db_path).cash_value(
         sales_features.source_key,
-        evaluation_score=evaluation.evaluation_score,
+        evaluation_score=(
+            evaluation.evaluation_score
+            if evaluation.validation_status == "evidence_validated"
+            else None
+        ),
         legacy_signals=MarketSignalRepository(db_path).get_signals(sales_features.source_key),
     )
     if cash_value.get("resolved") and cash_value["resolved"].get("attribution_method") != "legacy_aggregate":

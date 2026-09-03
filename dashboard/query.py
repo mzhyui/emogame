@@ -25,10 +25,13 @@ from dashboard.models import (
     SkinDashboardDetail,
 )
 from data.cash_value import CashValueRepository, CashValueService
+from data.emotion_evidence_repository import EmotionEvidenceRepository
 from data.market_signal_repository import MarketSignalRepository
 from data.skin_repository import SkinRepository
 from data.sqlite_read import connect_readonly, table_exists
 from feature_engineering.pipeline import FeatureBuilder
+from feature_engineering.features import MarketValidationSignals
+from models.emotion_evidence import signal_values_from_profile
 from models.rule_engine import RuleEngine
 
 
@@ -129,45 +132,25 @@ def _batch_cash(
 def _batch_emotion_evaluations(
     db_path: str | Path,
 ) -> dict[str, Any]:
-    """Source keys with a real RuleEngine-validated emotional score.
-
-    A skin is only "validated" when it has persisted market signals AND the
-    ``RuleEngine`` reports ``validation_status == "evidence_validated"``
-    (i.e. aspect evidence coverage >= 0.5). Signals are read through the
-    **opinion-only** path so cash-derived ``sales_volume`` / ``avg_spend_cny``
-    can never be injected into the emotional evaluation.
-
-    Returns ``{source_key: EvaluationResult}`` scoped to validated rows only.
-    Read-only: never creates a database or table.
-    """
+    """Return only profiles published by the 80/100 cohort release gate."""
     if not Path(db_path).exists():
         return {}
-    signal_repo = MarketSignalRepository(db_path)
-    try:
-        with _connect_readonly(signal_repo) as conn:
-            if not _table_exists(conn, "market_signal_records"):
-                return {}
-            rows = conn.execute(
-                "SELECT source_key FROM market_signal_records"
-            ).fetchall()
-    except sqlite3.Error:
-        return {}
-    keys = [row["source_key"] for row in rows]
-    if not keys:
+    profiles = EmotionEvidenceRepository(db_path).list_latest_published_profiles()
+    if not profiles:
         return {}
 
     repo = SkinRepository(db_path)
     builder = FeatureBuilder(repo)
     engine = RuleEngine()
     validated: dict[str, Any] = {}
-    for key in keys:
+    for key, profile in profiles.items():
         try:
-            signals = signal_repo.get_opinion_signals(key)
+            signals = MarketValidationSignals.from_dict(
+                signal_values_from_profile(profile)
+            )
             features = builder.build(key, signals)
-            result = engine.evaluate(features)
+            result = engine.evaluate(features, profile)
         except Exception:
-            # A skin missing detail records or with malformed signals must not
-            # crash the whole portfolio; treat it as not validated.
             continue
         if result.validation_status == "evidence_validated":
             validated[key] = result
@@ -207,6 +190,7 @@ def get_portfolio_rows(
         db_path, period_start=period_start, period_end=period_end
     )
     validated = _batch_emotion_evaluations(db_path)
+    diagnostics = EmotionEvidenceRepository(db_path).list_active_run_profiles()
 
     rows: list[PortfolioSkinRow] = []
     for skin in skins:
@@ -220,6 +204,7 @@ def get_portfolio_rows(
             continue
 
         evaluation = validated.get(source_key)
+        diagnostic = diagnostics.get(source_key)
         is_validated = evaluation is not None
         emotion_status = (
             EmotionStatus.VALIDATED.value if is_validated else EmotionStatus.MISSING.value
@@ -256,6 +241,19 @@ def get_portfolio_rows(
                 emotion_validated=is_validated,
                 perceived_value=perceived_value,
                 emotion_status=emotion_status,
+                emotion_run_id=evaluation.evidence_run_id if is_validated else None,
+                emotion_ci_low=(
+                    (evaluation.score_ci or {}).get("low") if is_validated else None
+                ),
+                emotion_ci_high=(
+                    (evaluation.score_ci or {}).get("high") if is_validated else None
+                ),
+                emotion_failure_reasons=(
+                    list(diagnostic.validation_reasons) if diagnostic else []
+                ),
+                emotion_qualified_aspect_count=(
+                    diagnostic.qualified_aspect_count if diagnostic else 0
+                ),
                 cash_attributed_revenue=cash_revenue_cny,
                 cash_sales_volume=cash.get("sales_volume"),
                 cash_avg_spend_cny=cash.get("avg_spend_cny"),
@@ -304,8 +302,24 @@ def get_portfolio_summary(
         if r.cash_attributed_revenue is not None
     )
     complete = sum(1 for r in rows if r.completeness == Completeness.COMPLETE.value)
+    cohort = (
+        EmotionEvidenceRepository(db_path).latest_cohort_status()
+        if db_path is not None
+        else None
+    ) or {}
+    catalog_size = total
+    catalog_validated = validated
+    if db_path is not None:
+        try:
+            catalog_size = int(SkinRepository(db_path).stats().get("skins") or 0)
+            catalog_validated = len(_batch_emotion_evaluations(db_path))
+        except Exception:
+            catalog_size = 0
+            catalog_validated = 0
     return PortfolioSummary(
         total_skins=total,
+        catalog_size=catalog_size,
+        catalog_validated_emotion_count=catalog_validated,
         validated_emotion_count=validated,
         validated_emotion_rate=round(validated / total, 4) if total else 0.0,
         cash_count=cash,
@@ -313,6 +327,12 @@ def get_portfolio_summary(
         portfolio_attributed_revenue_cny=round(portfolio_revenue, 2),
         evidence_completeness_rate=round(complete / total, 4) if total else 0.0,
         coverage_gaps=get_coverage_gaps(rows),
+        emotion_cohort_run_id=cohort.get("run_id"),
+        emotion_cohort_size=int(cohort.get("cohort_size") or 100),
+        emotion_cohort_validated_count=int(cohort.get("validated_count") or 0),
+        emotion_cohort_release_status=str(cohort.get("release_status") or "unavailable"),
+        emotion_observation_start=cohort.get("observation_start"),
+        emotion_observation_end=cohort.get("observation_end"),
     )
 
 
@@ -406,15 +426,19 @@ def get_skin_detail(
     if skin is None:
         return None
 
-    # Emotion: gated by the real RuleEngine over opinion-only signals, never
-    # injecting cash-derived sales volume into the emotional evaluation.
+    # Emotion: only a published, provenance-qualified profile can validate.
     evaluation: dict[str, Any] | None = None
     aspect_scores: dict[str, Any] = {}
     signal_repo = MarketSignalRepository(db_path)
     try:
-        signals = signal_repo.get_opinion_signals(source_key)
+        evidence_repo = EmotionEvidenceRepository(db_path)
+        profile = evidence_repo.latest_published_profile(source_key)
+        diagnostic_profile = profile or evidence_repo.latest_run_profile(source_key)
+        signals = MarketValidationSignals.from_dict(
+            signal_values_from_profile(diagnostic_profile) if diagnostic_profile else {}
+        )
         features = FeatureBuilder(SkinRepository(db_path)).build(source_key, signals)
-        result = RuleEngine().evaluate(features)
+        result = RuleEngine().evaluate(features, diagnostic_profile)
         evaluation = result.to_dict()
         if result.validation_status == "evidence_validated":
             aspect_scores = evaluation.get("aspect_scores", {})
@@ -451,7 +475,9 @@ def get_skin_detail(
         cash_value=cash_value,
         sales_gap={},
         sales_report=sales_report,
-        evidence_items=[],
+        evidence_items=EmotionEvidenceRepository(db_path).list_public_evidence(
+            source_key
+        ),
     )
 
 

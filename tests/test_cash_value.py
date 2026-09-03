@@ -62,7 +62,7 @@ class CashValueTests(unittest.TestCase):
             MarketValidationSignals(visual_score=80),
         )
         evaluation = payload["evaluation"]
-        self.assertEqual(evaluation["evaluation_score"], 80)
+        self.assertIsNone(evaluation["evaluation_score"])
         self.assertEqual(
             evaluation["validation_status"], "insufficient_market_evidence"
         )

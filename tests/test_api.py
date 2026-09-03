@@ -9,6 +9,9 @@ from api.main import app
 from crawlers.wzry_skin_crawler import AssetRecord, HeroRecord, SkinRecord, ensure_schema
 from crawlers.wzry_skin_crawler import save_asset, save_hero, save_skin
 from data.market_signal_repository import MarketSignalRepository
+from data.emotion_evidence_repository import EmotionEvidenceRepository
+from models.emotion_evidence import EvidenceQualificationProfile, SUBJECTIVE_ASPECTS
+from models.emotion_workflow import sha256_json
 
 
 class ApiTest(unittest.TestCase):
@@ -108,7 +111,81 @@ class ApiTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["evaluation"]["validation_status"], "evidence_validated")
+        evaluation = response.json()["evaluation"]
+        self.assertEqual(evaluation["validation_status"], "insufficient_market_evidence")
+        self.assertIn("missing_published_evidence_profile", evaluation["validation_reasons"])
+
+    def test_evaluate_reads_only_published_cohort_profile(self):
+        records = [
+            {
+                "source_key": "107-08" if index == 0 else f"cohort-{index:03d}",
+                "hero_name": "赵云" if index == 0 else f"hero-{index:03d}",
+                "skin_name": "龙胆" if index == 0 else f"skin-{index:03d}",
+                "online_date": "2020-05-05",
+                "cohort_role": "warm_start" if index < 50 else "coverage_extension",
+                "release_era": "pre_2021",
+            }
+            for index in range(100)
+        ]
+        manifest = {
+            "protocol_version": "emotion-evidence-v1",
+            "records_sha256": sha256_json(records),
+            "records": records,
+        }
+        repo = EmotionEvidenceRepository(self.db_path)
+        repo.create_run(
+            run_id="api-run",
+            protocol_version="emotion-evidence-v1",
+            protocol_hash="p" * 64,
+            cohort_hash=manifest["records_sha256"],
+            manifest=manifest,
+            observation_start="2024-09-02",
+            observation_end="2026-09-01",
+            annotation_schema_version=1,
+        )
+        repo.record_ethics_status("api-run", status="ready", record_hash="ethics")
+        repo.freeze_model_selection(
+            "api-run",
+            model_name="deterministic-v1",
+            model_digest="digest",
+            prompt_hash="prompt",
+            metrics={},
+        )
+        repo.set_review_gate("api-run", gate="calibration", passed=True, metrics={})
+        repo.set_review_gate("api-run", gate="audit", passed=True, metrics={})
+        repo.bind_validation_artifact("api-run", "artifact")
+        for row in records[:80]:
+            repo.save_validation_result(
+                EvidenceQualificationProfile(
+                    run_id="api-run",
+                    source_key=row["source_key"],
+                    calibration_passed=True,
+                    audit_passed=True,
+                    relevant_comment_count=20,
+                    unique_author_count=20,
+                    parent_document_count=2,
+                    platform_count=2,
+                    aspect_author_counts={aspect: 5 for aspect in SUBJECTIVE_ASPECTS},
+                    feel_actual_use_author_count=5,
+                    aspect_scores={aspect: 75 for aspect in SUBJECTIVE_ASPECTS},
+                    score=75,
+                    score_ci_low=70,
+                    score_ci_high=80,
+                    protocol_hash="p" * 64,
+                )
+            )
+        repo.publish_run("api-run")
+
+        response = self.client.post(
+            "/api/evaluate",
+            params={"db": str(self.db_path)},
+            json={"source_key": "107-08"},
+        )
+        self.assertEqual(response.status_code, 200)
+        evaluation = response.json()["evaluation"]
+        self.assertEqual(evaluation["validation_status"], "evidence_validated")
+        self.assertEqual(evaluation["evaluation_score"], 75)
+        self.assertEqual(evaluation["evidence_run_id"], "api-run")
 
     def test_sales_report(self):
         response = self.client.post(

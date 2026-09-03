@@ -75,6 +75,9 @@ def main() -> None:
             "当前皮肤市场证据不足（RuleEngine validation_status = "
             f"{validation_status}），无法给出综合情绪分。仅保留原始评估供审计。"
         )
+        reasons = evaluation.get("validation_reasons") or []
+        if reasons:
+            st.caption("未通过原因：" + "；".join(str(reason) for reason in reasons))
     ecols = st.columns(4)
     ecols[0].metric(
         "综合情绪分",
@@ -89,7 +92,7 @@ def main() -> None:
         "置信度", display_number(evaluation.get("confidence") if validated else None)
     )
     st.caption(
-        "情绪分只来自持久化市场信号经 RuleEngine 计算的 evaluation_score；"
+        "情绪分只来自已发布、来源合格的当前社区证据；"
         f"官方先验分 {display_number(evaluation.get('official_prior_score'))} 仅作标签，不进入排名。"
     )
     charts.aspect_radar(detail.aspect_scores)

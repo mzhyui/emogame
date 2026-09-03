@@ -1,0 +1,4 @@
+# Minimal dependencies for emotion evidence collection and human-review CSVs.
+httpx[socks]>=0.28,<1
+loguru>=0.7,<1
+pydantic>=2,<3

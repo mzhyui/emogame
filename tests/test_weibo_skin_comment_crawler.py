@@ -133,6 +133,14 @@ class FetchHotCommentsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(comments, [])
         self.assertEqual(len(client.calls), 1)
 
+    async def test_treats_generic_empty_content_response_as_empty(self):
+        client = SequenceClient([ValueError("Weibo API returned ok=0: 这里还没有内容")])
+
+        comments = await fetch_hot_comments(client, "123", max_comments=10)
+
+        self.assertEqual(comments, [])
+        self.assertEqual(len(client.calls), 1)
+
 
 class WeiboClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_http_432_is_not_retried(self):
@@ -186,6 +194,33 @@ class WeiboClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response["ok"], 1)
         self.assertEqual(request_count, 2)
+
+    async def test_empty_content_response_is_not_retried(self):
+        request_count = 0
+
+        def handler(request):
+            nonlocal request_count
+            request_count += 1
+            return httpx.Response(
+                200,
+                json={"ok": 0, "msg": "这里还没有内容"},
+                request=request,
+            )
+
+        client = WeiboClient("cookie", max_retries=4)
+        client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+        async def no_wait():
+            return None
+
+        client.rate_limiter.wait = no_wait
+        try:
+            response = await client._request("https://m.weibo.cn/comments/hotflow")
+        finally:
+            await client._client.aclose()
+
+        self.assertEqual(response["ok"], 0)
+        self.assertEqual(request_count, 1)
 
 
 class OutputTests(unittest.TestCase):

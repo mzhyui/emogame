@@ -89,7 +89,7 @@ class SalesAdvisorTest(unittest.TestCase):
         self.assertEqual(report.decision, "collect_more_evidence")
         self.assertIn("missing_sales_volume", report.evidence_gaps)
 
-    def test_scale_marketing_for_validated_purchase_intent(self):
+    def test_manual_purchase_intent_cannot_unlock_marketing_action(self):
         report = self._advise(
             MarketValidationSignals(
                 visual_score=0.85,
@@ -107,11 +107,10 @@ class SalesAdvisorTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(report.decision, "scale_marketing")
-        self.assertGreaterEqual(report.sales_readiness, 80)
-        self.assertEqual(report.pricing_guidance["posture"], "protect_premium")
+        self.assertEqual(report.decision, "collect_more_evidence")
+        self.assertNotEqual(report.decision, "scale_marketing")
 
-    def test_price_blocker_changes_decision(self):
+    def test_manual_price_signal_cannot_unlock_pricing_action(self):
         report = self._advise(
             MarketValidationSignals(
                 visual_score=0.8,
@@ -127,8 +126,8 @@ class SalesAdvisorTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(report.decision, "fix_price_or_bundle")
-        self.assertEqual(report.pricing_guidance["posture"], "discount_or_bundle")
+        self.assertEqual(report.decision, "collect_more_evidence")
+        self.assertNotEqual(report.pricing_guidance["posture"], "discount_or_bundle")
 
 
 if __name__ == "__main__":

@@ -87,7 +87,8 @@ class DashboardQueryTests(unittest.TestCase):
         # real RuleEngine gate. Emotion stays missing with no score.
         MarketSignalRepository(self.db_path).upsert_signals(
             "1-1", MarketValidationSignals(value_score=80), signal_source="manual")
-        # Full aspect set (>= 0.5 coverage) -> validated, scores populated.
+        # Even a full manual aspect set is audit-only without a published,
+        # provenance-qualified emotion profile.
         MarketSignalRepository(self.db_path).upsert_signals(
             "1-3",
             MarketValidationSignals(
@@ -106,10 +107,10 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual(by_key["1-1"].emotion_status, EmotionStatus.MISSING.value)
         self.assertIsNone(by_key["1-1"].emotion_score)
         self.assertIsNone(by_key["1-1"].perceived_value)
-        # 1-3: full aspects -> validated with populated emotion + perceived value.
-        self.assertEqual(by_key["1-3"].emotion_status, EmotionStatus.VALIDATED.value)
-        self.assertIsNotNone(by_key["1-3"].emotion_score)
-        self.assertIsNotNone(by_key["1-3"].perceived_value)
+        # 1-3: manual aggregates cannot confer validation.
+        self.assertEqual(by_key["1-3"].emotion_status, EmotionStatus.MISSING.value)
+        self.assertIsNone(by_key["1-3"].emotion_score)
+        self.assertIsNone(by_key["1-3"].perceived_value)
         # skin 1-2 has neither cash nor emotion
         self.assertEqual(by_key["1-2"].cash_status, CashStatus.MISSING.value)
         self.assertEqual(by_key["1-2"].emotion_status, EmotionStatus.MISSING.value)
@@ -250,7 +251,7 @@ class DashboardQueryTests(unittest.TestCase):
         detail = get_skin_detail(self.db_path, "1-1")
         self.assertIsNotNone(detail)
         assert detail is not None
-        self.assertEqual(detail.evaluation["evaluation_score"], 80)
+        self.assertIsNone(detail.evaluation["evaluation_score"])
         self.assertEqual(
             detail.evaluation["validation_status"], "insufficient_market_evidence"
         )

@@ -478,7 +478,7 @@ def _portfolio_overview(db_path: str) -> None:
             period_start=f.period_start,
             period_end=f.period_end,
         )
-        summary = get_portfolio_summary(rows)
+        summary = get_portfolio_summary(rows, db_path=db_path)
         releases, revenue = get_release_revenue_timeline(
             db_path,
             period_start=f.period_start,
@@ -491,6 +491,17 @@ def _portfolio_overview(db_path: str) -> None:
     st.caption(
         f"筛选范围内 {summary.total_skins} 个皮肤 · 王者荣耀 · 只读分析"
     )
+    if summary.emotion_cohort_run_id:
+        st.caption(
+            "当前社区情绪（固定 100 皮肤队列） · "
+            f"{summary.emotion_observation_start} 至 {summary.emotion_observation_end} · "
+            f"队列覆盖 {summary.emotion_cohort_validated_count}/"
+            f"{summary.emotion_cohort_size} · "
+            f"目录覆盖 {summary.catalog_validated_emotion_count}/"
+            f"{summary.catalog_size} · "
+            f"发布状态 {summary.emotion_cohort_release_status}。"
+            "该队列不代表全部 960 个皮肤。"
+        )
 
     # Top KPI row.
     k1, k2, k3, k4, k5 = st.columns(5)
@@ -498,7 +509,13 @@ def _portfolio_overview(db_path: str) -> None:
     k2.metric(
         "已验证情绪分皮肤",
         f"{summary.validated_emotion_count}",
-        help=f"覆盖率 {display_percent(summary.validated_emotion_rate * 100)}",
+        help=(
+            f"目录覆盖 {summary.catalog_validated_emotion_count}/"
+            f"{summary.catalog_size}；筛选内覆盖率 "
+            f"{display_percent(summary.validated_emotion_rate * 100)}；"
+            f"固定队列 {summary.emotion_cohort_validated_count}/"
+            f"{summary.emotion_cohort_size}"
+        ),
     )
     k3.metric(
         "有现金记录皮肤",
@@ -516,8 +533,8 @@ def _portfolio_overview(db_path: str) -> None:
 
     if summary.validated_emotion_count == 0:
         st.info(
-            "情绪排行榜当前为空：只有经持久化信号由 RuleEngine 计算且 validation_status == "
-            "evidence_validated 的皮肤才能进入排行，且不会用官方先验分补齐。前往「数据工作台」导入证据。"
+            "情绪排行榜当前为空：固定 100 皮肤队列必须先达到 80 个来源合格结果并发布。"
+            "官方先验、现金字段、感知溢价试点和证据不足的 RuleEngine 输出均不会补齐排行。"
         )
 
     # Charts.
@@ -536,7 +553,7 @@ def _portfolio_overview(db_path: str) -> None:
         st.subheader("情绪分 × 估算现金价值")
         charts.emotion_vs_cash_scatter(rows)
     with c4:
-        st.subheader("证据充分皮肤排行")
+        st.subheader("当前社区情绪队列排行")
         charts.top_validated_ranking(rows, by="emotion")
 
     st.divider()

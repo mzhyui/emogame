@@ -8,9 +8,12 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from data.cash_value import CashValueService
+from data.emotion_evidence_repository import EmotionEvidenceRepository
 from data.market_signal_repository import MarketSignalRepository
 from data.skin_repository import DEFAULT_DB_PATH, SkinRepository
 from feature_engineering.pipeline import FeatureBuilder
+from feature_engineering.features import MarketValidationSignals
+from models.emotion_evidence import signal_values_from_profile
 from models.rule_engine import RuleEngine
 
 
@@ -63,7 +66,13 @@ def get_cash_value(
     path, skin_repo = _context(source_key, db)
     market_repo = MarketSignalRepository(path)
     signals = market_repo.get_signals(source_key)
-    evaluation = RuleEngine().evaluate(FeatureBuilder(skin_repo).build(source_key, signals))
+    profile = EmotionEvidenceRepository(path).latest_published_profile(source_key)
+    emotion_signals = MarketValidationSignals.from_dict(
+        signal_values_from_profile(profile) if profile else {}
+    )
+    evaluation = RuleEngine().evaluate(
+        FeatureBuilder(skin_repo).build(source_key, emotion_signals), profile
+    )
     try:
         return CashValueService(path).cash_value(
             source_key, start, end, evaluation_score=evaluation.evaluation_score,

@@ -137,6 +137,8 @@ def _build_table(rows) -> pd.DataFrame:
             "上线日期": r.online_date or "—",
             "情绪状态": emotion_status_label(r.emotion_status),
             "情绪分": r.emotion_score if r.emotion_score is not None else "—",
+            "合格维度": f"{r.emotion_qualified_aspect_count}/6",
+            "缺失原因": "；".join(r.emotion_failure_reasons) or "—",
             "性价比": r.perceived_value if r.perceived_value is not None else "—",
             "现金状态": cash_status_label(r.cash_status),
             "归因收入": display_currency_amount(r.cash_attributed_revenue, "CNY")

@@ -134,8 +134,9 @@ class MarketSignalRepositoryTest(unittest.TestCase):
         features = FeatureBuilder(SkinRepository(self.db_path)).build("105-02", signals)
         result = RuleEngine().evaluate(features)
 
-        self.assertEqual(result.validation_status, "evidence_validated")
+        self.assertEqual(result.validation_status, "insufficient_market_evidence")
         self.assertIsNotNone(result.evaluation_score)
+        self.assertIn("missing_published_evidence_profile", result.validation_reasons)
 
     def test_evidence_aggregation(self):
         self.market_repo.add_evidence(

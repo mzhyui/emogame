@@ -96,7 +96,7 @@ class EvaluationTest(unittest.TestCase):
         self.assertIsNone(result.evaluation_score)
         self.assertGreater(result.official_prior_score, 0)
 
-    def test_market_signals_raise_confidence_and_validate(self):
+    def test_market_signals_are_audit_only_without_published_profile(self):
         builder = FeatureBuilder(self.repo, reference_date=date(2024, 7, 1))
         baseline = RuleEngine().evaluate(builder.build("105-01"))
         features = builder.build(
@@ -119,10 +119,11 @@ class EvaluationTest(unittest.TestCase):
         )
         result = RuleEngine().evaluate(features)
 
-        self.assertEqual(result.validation_status, "evidence_validated")
-        self.assertGreater(result.confidence, baseline.confidence)
+        self.assertEqual(result.validation_status, "insufficient_market_evidence")
+        self.assertEqual(result.confidence, baseline.confidence)
         self.assertIsNotNone(result.evaluation_score)
         self.assertGreater(result.aspect_scores["in_game_feel"], 0)
+        self.assertIn("missing_published_evidence_profile", result.validation_reasons)
 
 
 if __name__ == "__main__":

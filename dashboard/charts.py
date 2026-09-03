@@ -112,19 +112,25 @@ def emotion_vs_cash_scatter(rows: list[PortfolioSkinRow]) -> None:
 
 
 def top_validated_ranking(rows: list[PortfolioSkinRow], by: str = "emotion") -> None:
-    """Leaderboard of validated skins. Empty state when none are validated."""
+    """Cohort-only leaderboard of provenance-qualified skins."""
     validated = [r for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value]
     if not validated:
         render_empty_state(
-            "情绪排行榜当前为空。只有 validation_status == evidence_validated 的皮肤才能进入排行，"
-            "且不会用官方先验分补齐。",
+            "当前感知情绪队列尚未发布，或未达到 80/100 发布门槛。"
+            "只有持久化、来源合格且 validation_status == evidence_validated 的皮肤才能进入排行。",
         )
         return
     key = "emotion_score" if by == "emotion" else "cash_attributed_revenue"
     ranked = sort_missing_last(validated, key, reverse=True)
     df = pd.DataFrame([
         {"排名": i + 1, "皮肤": f"{r.hero_name}/{r.skin_name}",
-         "情绪分": r.emotion_score, "估算归因收入": r.cash_attributed_revenue}
+         "情绪分": r.emotion_score,
+         "95% CI": (
+             f"{r.emotion_ci_low:.1f}–{r.emotion_ci_high:.1f}"
+             if r.emotion_ci_low is not None and r.emotion_ci_high is not None
+             else "—"
+         ),
+         "估算归因收入": r.cash_attributed_revenue}
         for i, r in enumerate(ranked[:20])
     ])
     st.dataframe(df, hide_index=True, use_container_width=True)

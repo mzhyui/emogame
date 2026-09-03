@@ -67,6 +67,11 @@ DEFAULT_USER_AGENT = (
     "Version/15.0 Mobile/15E148 Safari/604.1"
 )
 
+WEIBO_EMPTY_CONTENT_MESSAGES = (
+    "这里还没有内容",
+    "还没有人评论",
+)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = PROJECT_ROOT / ".env"
 OUTPUT_DIR = PROJECT_ROOT / "data" / "weibo_comments"
@@ -210,10 +215,17 @@ class RateLimiter:
 class WeiboClient:
     """Async HTTP client for m.weibo.cn with cookie auth and retry logic."""
 
-    def __init__(self, cookie: str, timeout: float = 30.0, max_retries: int = 4):
+    def __init__(
+        self,
+        cookie: str,
+        timeout: float = 30.0,
+        max_retries: int = 4,
+        proxy: str | None = None,
+    ):
         self.cookie = cookie
         self.timeout = timeout
         self.max_retries = max_retries
+        self.proxy = proxy
         self.rate_limiter = RateLimiter()
         self._client: httpx.AsyncClient | None = None
 
@@ -233,6 +245,7 @@ class WeiboClient:
                 "X-Requested-With": "XMLHttpRequest",
                 "Referer": "https://m.weibo.cn/",
             },
+            proxy=self.proxy,
             follow_redirects=True,
         )
         return self
@@ -265,6 +278,10 @@ class WeiboClient:
                 # m.weibo.cn may return ok=0 for rate-limit / auth errors
                 if isinstance(data, dict) and data.get("ok") == 0:
                     msg = data.get("msg", "unknown error")
+                    if any(
+                        marker in str(msg) for marker in WEIBO_EMPTY_CONTENT_MESSAGES
+                    ):
+                        return data
                     if "频率" in str(msg) or "太快" in str(msg):
                         wait = min(60, 2 ** (attempt + 1))
                         logger.warning("Rate-limited, waiting %ds ...", wait)
@@ -484,7 +501,9 @@ async def fetch_hot_comments(
                 "max_id": max_id,
             })
         except Exception as exc:
-            if "还没有人评论" in str(exc):
+            if any(
+                marker in str(exc) for marker in WEIBO_EMPTY_CONTENT_MESSAGES
+            ):
                 logger.info("No comments available for mid=%s", mid)
                 break
             if not comments:
@@ -507,6 +526,7 @@ async def fetch_hot_comments(
             if len(comments) >= max_comments:
                 break
             comments.append({
+                "comment_id": str(item.get("id") or item.get("rootid") or ""),
                 "user": item.get("user", {}).get("screen_name", ""),
                 "user_id": item.get("user", {}).get("id", 0),
                 "text": _clean_html(item.get("text", "")),
@@ -558,6 +578,7 @@ async def fetch_all_comments(
             if len(comments) >= max_comments:
                 break
             comments.append({
+                "comment_id": str(item.get("id") or item.get("rootid") or ""),
                 "user": item.get("user", {}).get("screen_name", ""),
                 "user_id": item.get("user", {}).get("id", 0),
                 "text": _clean_html(item.get("text", "")),

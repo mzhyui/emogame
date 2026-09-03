@@ -17,6 +17,7 @@ data/*.json
 !data/migrations/
 data/wzry_skins/*
 !data/wzry_skins/.gitkeep
+data/emotion_evidence/
 data/premium_pilot/
 
 # Models (large files)

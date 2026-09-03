@@ -74,6 +74,11 @@ class PortfolioSkinRow:
     emotion_validated: bool = False
     perceived_value: int | None = None  # aspect_scores["value_for_money"]
     emotion_status: str = EmotionStatus.MISSING.value
+    emotion_run_id: str | None = None
+    emotion_ci_low: float | None = None
+    emotion_ci_high: float | None = None
+    emotion_failure_reasons: list[str] = field(default_factory=list)
+    emotion_qualified_aspect_count: int = 0
 
     # Cash value -- resolved via the existing priority chain.
     cash_attributed_revenue: float | None = None  # CNY-convertible only
@@ -112,6 +117,8 @@ class PortfolioSummary:
     """Top-level KPIs for the portfolio overview page."""
 
     total_skins: int = 0
+    catalog_size: int = 0
+    catalog_validated_emotion_count: int = 0
     validated_emotion_count: int = 0
     validated_emotion_rate: float = 0.0
     cash_count: int = 0
@@ -119,10 +126,18 @@ class PortfolioSummary:
     portfolio_attributed_revenue_cny: float = 0.0
     evidence_completeness_rate: float = 0.0
     coverage_gaps: dict[str, int] = field(default_factory=dict)
+    emotion_cohort_run_id: str | None = None
+    emotion_cohort_size: int = 100
+    emotion_cohort_validated_count: int = 0
+    emotion_cohort_release_status: str = "unavailable"
+    emotion_observation_start: str | None = None
+    emotion_observation_end: str | None = None
 
     def as_metrics(self) -> dict[str, Any]:
         return {
             "total_skins": self.total_skins,
+            "catalog_size": self.catalog_size,
+            "catalog_validated_emotion_count": self.catalog_validated_emotion_count,
             "validated_emotion_count": self.validated_emotion_count,
             "validated_emotion_rate": self.validated_emotion_rate,
             "cash_count": self.cash_count,
@@ -130,4 +145,10 @@ class PortfolioSummary:
             "portfolio_attributed_revenue_cny": self.portfolio_attributed_revenue_cny,
             "evidence_completeness_rate": self.evidence_completeness_rate,
             "coverage_gaps": self.coverage_gaps,
+            "emotion_cohort_run_id": self.emotion_cohort_run_id,
+            "emotion_cohort_size": self.emotion_cohort_size,
+            "emotion_cohort_validated_count": self.emotion_cohort_validated_count,
+            "emotion_cohort_release_status": self.emotion_cohort_release_status,
+            "emotion_observation_start": self.emotion_observation_start,
+            "emotion_observation_end": self.emotion_observation_end,
         }
