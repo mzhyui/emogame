@@ -19,6 +19,12 @@ class EmotionStatus(str, Enum):
     MISSING = "missing"
 
 
+class EmotionScoreSource(str, Enum):
+    HUMAN_FINAL_TRUTH = "human_final_truth"
+    SELECTED_COMMENT_MODEL = "selected_comment_model"
+    PUBLISHED_RULE_ENGINE = "published_rule_engine"
+
+
 class CashStatus(str, Enum):
     HAS_RECORD = "has_record"
     MISSING = "missing"
@@ -69,9 +75,12 @@ class PortfolioSkinRow:
     online_date: str | None
     primary_asset_url: str | None = None
 
-    # Emotional evaluation -- only present when persisted & validated.
+    # Emotional evaluation -- declared human truth takes precedence over a
+    # published RuleEngine result. Missing sources remain ``None``.
     emotion_score: int | None = None
     emotion_validated: bool = False
+    emotion_score_source: str | None = None
+    emotion_score_status: str | None = None
     perceived_value: int | None = None  # aspect_scores["value_for_money"]
     emotion_status: str = EmotionStatus.MISSING.value
     emotion_run_id: str | None = None
@@ -105,6 +114,8 @@ class SkinDashboardDetail:
     source_key: str
     skin: dict[str, Any]
     evaluation: dict[str, Any] | None = None
+    final_truth_score: dict[str, Any] | None = None
+    model_comment_score: dict[str, Any] | None = None
     aspect_scores: dict[str, int | None] = field(default_factory=dict)
     cash_value: dict[str, Any] = field(default_factory=dict)
     sales_gap: dict[str, Any] = field(default_factory=dict)

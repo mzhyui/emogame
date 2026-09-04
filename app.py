@@ -451,7 +451,6 @@ def _portfolio_overview(db_path: str) -> None:
     """Default landing page: portfolio overview."""
     from dashboard import charts, filters
     from dashboard.format import display_currency_amount, display_number, display_percent
-    from dashboard.models import EmotionStatus
     from dashboard.query import (
         get_coverage_gaps,
         get_portfolio_rows,
@@ -489,31 +488,32 @@ def _portfolio_overview(db_path: str) -> None:
 
     st.title("组合总览")
     st.caption(
-        f"筛选范围内 {summary.total_skins} 个皮肤 · 王者荣耀 · 只读分析"
+        f"筛选范围内 {summary.total_skins} 个皮肤 · 王者荣耀 · 只读分析。"
+        "情绪分优先使用人工最终真值，其次使用已选评论模型，"
+        "最后回退到已发布模型分；无可用情绪来源时留空。"
     )
     if summary.emotion_cohort_run_id:
         st.caption(
-            "当前社区情绪（固定 100 皮肤队列） · "
+            "模型评分队列（固定 100 皮肤） · "
             f"{summary.emotion_observation_start} 至 {summary.emotion_observation_end} · "
-            f"队列覆盖 {summary.emotion_cohort_validated_count}/"
+            f"已发布合格 {summary.emotion_cohort_validated_count}/"
             f"{summary.emotion_cohort_size} · "
-            f"目录覆盖 {summary.catalog_validated_emotion_count}/"
-            f"{summary.catalog_size} · "
             f"发布状态 {summary.emotion_cohort_release_status}。"
-            "该队列不代表全部 960 个皮肤。"
+            "上方展示覆盖同时计入人工真值与评论模型探索分；"
+            "展示分不等于队列发布合格。"
         )
 
     # Top KPI row.
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("筛选后皮肤数", display_number(summary.total_skins))
     k2.metric(
-        "已验证情绪分皮肤",
+        "有情绪分皮肤",
         f"{summary.validated_emotion_count}",
         help=(
-            f"目录覆盖 {summary.catalog_validated_emotion_count}/"
+            f"目录有来源 {summary.catalog_validated_emotion_count}/"
             f"{summary.catalog_size}；筛选内覆盖率 "
             f"{display_percent(summary.validated_emotion_rate * 100)}；"
-            f"固定队列 {summary.emotion_cohort_validated_count}/"
+            f"模型队列已发布 {summary.emotion_cohort_validated_count}/"
             f"{summary.emotion_cohort_size}"
         ),
     )
@@ -533,8 +533,7 @@ def _portfolio_overview(db_path: str) -> None:
 
     if summary.validated_emotion_count == 0:
         st.info(
-            "情绪排行榜当前为空：固定 100 皮肤队列必须先达到 80 个来源合格结果并发布。"
-            "官方先验、现金字段、感知溢价试点和证据不足的 RuleEngine 输出均不会补齐排行。"
+            "当前筛选范围内没有可用情绪来源，情绪分与排行均留空。"
         )
 
     # Charts.
@@ -553,7 +552,7 @@ def _portfolio_overview(db_path: str) -> None:
         st.subheader("情绪分 × 估算现金价值")
         charts.emotion_vs_cash_scatter(rows)
     with c4:
-        st.subheader("当前社区情绪队列排行")
+        st.subheader("可用情绪分排行")
         charts.top_validated_ranking(rows, by="emotion")
 
     st.divider()

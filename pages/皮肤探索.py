@@ -17,6 +17,8 @@ from dashboard.format import (
     cash_status_label,
     display_currency_amount,
     display_number,
+    emotion_reason_label,
+    emotion_source_label,
     emotion_status_label,
     sort_missing_last,
 )
@@ -128,7 +130,7 @@ def _render_scatter(rows, x_key: str, y_key: str) -> None:
 
 
 def _build_table(rows) -> pd.DataFrame:
-    return pd.DataFrame([
+    frame = pd.DataFrame([
         {
             "source_key": r.source_key,
             "英雄": r.hero_name,
@@ -136,10 +138,18 @@ def _build_table(rows) -> pd.DataFrame:
             "品质": r.quality or "—",
             "上线日期": r.online_date or "—",
             "情绪状态": emotion_status_label(r.emotion_status),
-            "情绪分": r.emotion_score if r.emotion_score is not None else "—",
-            "合格维度": f"{r.emotion_qualified_aspect_count}/6",
-            "缺失原因": "；".join(r.emotion_failure_reasons) or "—",
-            "性价比": r.perceived_value if r.perceived_value is not None else "—",
+            "情绪来源": emotion_source_label(r.emotion_score_source),
+            "情绪分": r.emotion_score,
+            "有值维度": (
+                f"{r.emotion_qualified_aspect_count}/6"
+                if r.emotion_score_source
+                else ""
+            ),
+            "缺失原因": (
+                "；".join(emotion_reason_label(reason) for reason in r.emotion_failure_reasons)
+                or "—"
+            ),
+            "性价比": r.perceived_value,
             "现金状态": cash_status_label(r.cash_status),
             "归因收入": display_currency_amount(r.cash_attributed_revenue, "CNY")
             if r.cash_attributed_revenue is not None else "—",
@@ -151,6 +161,12 @@ def _build_table(rows) -> pd.DataFrame:
         }
         for r in rows
     ])
+    for column in ("情绪分", "性价比"):
+        if column in frame:
+            # Nullable integers keep missing emotional fields visually blank
+            # without mixing strings and numbers (which breaks Arrow output).
+            frame[column] = pd.array(frame[column], dtype="Int64")
+    return frame
 
 
 def _completeness_label(r) -> str:

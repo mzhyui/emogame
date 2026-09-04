@@ -56,3 +56,62 @@ identity and evidence columns unchanged. Humans fill only these columns:
 For `irrelevant` or `uncertain`, leave `aspects` and `polarities` empty. Make
 separate copies for each reviewer; never edit or reuse an imported reviewer
 original.
+
+## Declared final-truth operation
+
+When the project owner explicitly declares one completed review artifact to be
+the final truth, import it with the distinct `final_truth` kind. This is an
+opt-in single-source policy, not two-review adjudication, and the artifact hash
+is bound once per run and phase:
+
+```bash
+.venv/bin/python scripts/run_emotion_evidence.py import-review \
+  data/emotion_evidence/runs/20260902-current100-v1/development-v2.csv \
+  --reviewer-id development-v2-final-truth \
+  --kind final_truth \
+  --apply
+```
+
+Model selection prefers declared final truth when present and requires at least
+200 shared judgments under policy `single_human_final_truth_v1`. It still
+reports the locked relevance, aspect, and polarity quality metrics. Declaring
+the truth source does not make a failing extractor pass those metrics, does not
+fill skins without exact evidence, and does not bypass locked calibration,
+production audit, per-skin qualification, or publication gates.
+
+To evaluate a local extractor only on evidence represented in the declared
+truth artifact, use `annotate-local --phase development --truth-only`. The
+operation remains resumable and does not annotate unrelated production rows.
+
+Build the direct catalog report from the declared artifact with:
+
+```bash
+.venv/bin/python scripts/score_final_truth_emotion.py --apply
+```
+
+The report contains all 960 catalog skins. `observed_emotion_score` is a direct
+summary of the labeled aspects and renormalizes only over aspects present in
+the artifact. `complete_six_aspect_score` follows the locked six-aspect formula
+and remains null if any aspect is absent. Skins with no truth rows or no
+relevant truth stay null rather than being imputed as neutral.
+
+## Dashboard scores for all available comments
+
+The Streamlit dashboard applies this display precedence per skin:
+
+1. declared human final truth for reviewed skins, including an explicit
+   no-relevant result;
+2. the frozen selected model over all exact-mapped, non-synthetic,
+   non-quarantined comments in the active run;
+3. a published RuleEngine score, when one exists;
+4. blank when none of the above supplies an observed emotional dimension.
+
+The comment-model path requires complete annotation coverage for every usable
+comment belonging to that skin and exact agreement with the run's frozen model
+digest and prompt hash. It calculates `observed_emotion_score` over the aspects
+actually found and never substitutes neutral values for missing aspects.
+
+These comment-model values are exploratory display scores when the selected
+extractor has not passed its quality gate. Showing them does not change the
+calibration, audit, release, or publication state. The detail page exposes the
+model name, gate state, aspect coverage, and relevant/total comment counts.

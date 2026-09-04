@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from data.emotion_evidence_repository import EmotionEvidenceRepository
@@ -27,6 +28,11 @@ from models.emotion_workflow import (
     sha256_json,
     validate_annotation,
     validate_cohort_manifest,
+    write_review_pack,
+)
+from models.final_truth_emotion import (
+    score_final_truth_rows,
+    score_observed_annotation_rows,
 )
 from models.rule_engine import RuleEngine
 from scripts import run_emotion_evidence
@@ -105,6 +111,56 @@ def qualifying_rows(*, actual_use_after: int = 20) -> list[dict]:
 
 
 class EmotionEvidenceContractTests(unittest.TestCase):
+    def test_final_truth_scorer_separates_partial_and_complete_scores(self):
+        complete = {
+            "evidence_id": 1,
+            "source_key": "complete",
+            "relevance": "relevant",
+            "aspects": list(SUBJECTIVE_ASPECTS),
+            "polarities": {aspect: 1 for aspect in SUBJECTIVE_ASPECTS},
+        }
+        partial = {
+            "evidence_id": 2,
+            "source_key": "partial",
+            "relevance": "relevant",
+            "aspects": ["visual_appeal"],
+            "polarities": {"visual_appeal": -1},
+        }
+        missing = {
+            "evidence_id": 3,
+            "source_key": "missing",
+            "relevance": "irrelevant",
+            "aspects": [],
+            "polarities": {},
+        }
+
+        scores = score_final_truth_rows([complete, partial, missing])
+        self.assertEqual(scores["complete"].score_status, "complete_final_truth")
+        self.assertEqual(scores["complete"].complete_six_aspect_score, 75)
+        self.assertEqual(scores["complete"].observed_emotion_score, 75)
+        self.assertEqual(scores["partial"].score_status, "partial_final_truth")
+        self.assertEqual(scores["partial"].observed_emotion_score, 25)
+        self.assertIsNone(scores["partial"].complete_six_aspect_score)
+        self.assertEqual(scores["missing"].score_status, "no_relevant_final_truth")
+        self.assertIsNone(scores["missing"].observed_emotion_score)
+
+    def test_observed_scorer_labels_model_comment_outputs(self):
+        scores = score_observed_annotation_rows(
+            [
+                {
+                    "evidence_id": 1,
+                    "source_key": "comment-skin",
+                    "relevance": "relevant",
+                    "aspects": ["in_game_feel"],
+                    "polarities": {"in_game_feel": 1},
+                }
+            ],
+            source_kind="model_comments",
+        )
+        score = scores["comment-skin"]
+        self.assertEqual(score.score_status, "partial_model_comments")
+        self.assertEqual(score.observed_emotion_score, 75)
+
     def test_cohort_is_deterministic_and_extension_quotas_are_exact(self):
         skins = []
         warm = []
@@ -454,6 +510,64 @@ class EmotionEvidenceRepositoryTests(unittest.TestCase):
             <= columns
         )
         self.assertEqual(count, 1)
+
+    def test_declared_final_truth_is_immutable_and_preferred(self):
+        evidence_id = self.repo.add_evidence(self._evidence())
+        review = Path(self.tmp.name) / "final-truth.csv"
+        write_review_pack(
+            review,
+            [
+                {
+                    "review_id": "truth-1",
+                    "evidence_id": evidence_id,
+                    "phase": "development",
+                    "source_key": "skin-000",
+                    "relevance": "relevant",
+                    "aspects": "in_game_feel",
+                    "polarities": "in_game_feel:1",
+                    "actual_use": "yes",
+                    "confidence": "1",
+                }
+            ],
+        )
+        args = SimpleNamespace(
+            input=review,
+            db=self.db,
+            run_id="run-1",
+            reviewer_id="declared-truth-v1",
+            kind=run_emotion_evidence.FINAL_TRUTH_KIND,
+            apply=True,
+        )
+        run_emotion_evidence.command_import_review(args)
+
+        truth, truth_kind = run_emotion_evidence._truth_annotations(
+            self.repo, "run-1", phase="development"
+        )
+        self.assertEqual(truth_kind, run_emotion_evidence.FINAL_TRUTH_KIND)
+        self.assertEqual(len(truth), 1)
+        self.assertEqual(truth[0]["polarities"], {"in_game_feel": 1})
+        self.assertEqual(
+            run_emotion_evidence._development_minimum(truth_kind), 200
+        )
+        input_hashes = self.repo.get_run("run-1")["input_hashes"]
+        self.assertIn("final-truth:development", input_hashes)
+        self.assertIn("final-truth-annotations:development", input_hashes)
+
+        conflicting = SimpleNamespace(**vars(args))
+        conflicting.reviewer_id = "different-truth"
+        with self.assertRaisesRegex(ValueError, "already bound"):
+            run_emotion_evidence.command_import_review(conflicting)
+
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE emotion_evidence_annotations SET confidence = 0.5 "
+                "WHERE annotator_kind = 'final_truth'"
+            )
+            conn.commit()
+        with self.assertRaisesRegex(ValueError, "differs from its bound digest"):
+            run_emotion_evidence._truth_annotations(
+                self.repo, "run-1", phase="development"
+            )
 
     def _prepare_release(self, count: int) -> None:
         self.repo.record_ethics_status("run-1", status="ready", record_hash="ethics")

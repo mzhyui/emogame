@@ -1,22 +1,32 @@
 """Unit tests for the dashboard read models and batched query layer.
 
 Verifies the three value objects stay independent, cash priority is honoured,
-CNY-convertible revenue is summed correctly, missing/empty DBs never crash, and
-unvalidated emotional records never enter the leaderboard.
+CNY-convertible revenue is summed correctly, human-final-truth scores merge by
+exact identity, missing/empty DBs never crash, and unvalidated emotional records
+never enter the leaderboard.
 """
 
+import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
 from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from crawlers.wzry_skin_crawler import HeroRecord, SkinRecord, ensure_schema, save_hero, save_skin
 from data.cash_value import CashValueRepository, CashValueService
 from data.market_signal_repository import MarketSignalRepository
 from feature_engineering.features import MarketValidationSignals
+from models.emotion_workflow import parse_review_pack, write_review_pack
+from models.final_truth_emotion import (
+    final_truth_annotation_digest,
+    score_final_truth_rows,
+)
 
 from dashboard.models import CashStatus, EmotionStatus
+import dashboard.query as dashboard_query
 from dashboard.query import (
     default_period,
     get_coverage_gaps,
@@ -77,6 +87,241 @@ class DashboardQueryTests(unittest.TestCase):
                 "confidence": confidence, "provenance_json": "{}",
                 "import_batch": "test-batch",
             })
+
+    def write_final_truth_scores(self) -> Path:
+        truth = Path(self.tmp.name) / "human-truth.csv"
+        truth_rows = []
+        for index in range(13):
+            truth_rows.append({
+                "review_id": f"truth-{index}",
+                "evidence_id": index + 1,
+                "phase": "development",
+                "source_key": "1-1",
+                "hero_name": "测试英雄",
+                "skin_name": "皮肤1-1",
+                "relevance": "relevant",
+                "aspects": "visual_appeal",
+                "polarities": f"visual_appeal:{2 if index == 12 else 1}",
+                "actual_use": "yes",
+                "confidence": "1",
+            })
+        for index in range(3):
+            truth_rows.append({
+                "review_id": f"truth-irrelevant-{index}",
+                "evidence_id": 14 + index,
+                "phase": "development",
+                "source_key": "1-1",
+                "hero_name": "测试英雄",
+                "skin_name": "皮肤1-1",
+                "relevance": "irrelevant",
+                "actual_use": "no",
+                "confidence": "1",
+            })
+        for index in range(5):
+            truth_rows.append({
+                "review_id": f"missing-{index}",
+                "evidence_id": 17 + index,
+                "phase": "development",
+                "source_key": "1-2",
+                "hero_name": "测试英雄",
+                "skin_name": "皮肤1-2",
+                "relevance": "irrelevant",
+                "actual_use": "no",
+                "confidence": "1",
+            })
+        write_review_pack(truth, truth_rows)
+        parsed_truth = parse_review_pack(truth)
+        scored = score_final_truth_rows(parsed_truth)
+        rows = []
+        for source_key in ("1-1", "1-2"):
+            rows.append({
+                **scored[source_key].to_dict(),
+                "hero_name": "测试英雄",
+                "skin_name": f"皮肤{source_key}",
+            })
+        report = Path(self.tmp.name) / "final-truth-scores.json"
+        report.write_text(json.dumps({
+            "schema_version": 1,
+            "scorer_version": "human-final-truth-scorer-v1",
+            "truth_policy": "single_human_final_truth_v1",
+            "truth_artifact": str(truth),
+            "truth_sha256": hashlib.sha256(truth.read_bytes()).hexdigest(),
+            "truth_annotations_sha256": final_truth_annotation_digest(parsed_truth),
+            "truth_rows": len(parsed_truth),
+            "truth_skins": len(scored),
+            "catalog_skins": len(rows),
+            "rows": rows,
+        }, ensure_ascii=False), encoding="utf-8")
+        return report
+
+    def test_human_final_truth_score_merges_and_missing_source_stays_blank(self):
+        self.add_skin("1-1", date(2026, 1, 1))
+        self.add_skin("1-2", date(2026, 2, 1))
+        report = self.write_final_truth_scores()
+        model_scores = {
+            key: {
+                "source_key": key,
+                "hero_name": "测试英雄",
+                "skin_name": f"皮肤{key}",
+                "observed_emotion_score": 99,
+                "score_status": "partial_model_comments",
+                "aspect_scores": {"visual_appeal": 99},
+                "run_id": "model-run",
+            }
+            for key in ("1-1", "1-2")
+        }
+        with (
+            patch.object(dashboard_query, "FINAL_TRUTH_SCORES_PATH", report),
+            patch.object(
+                dashboard_query,
+                "_batch_model_comment_scores",
+                return_value=model_scores,
+            ),
+        ):
+            rows = get_portfolio_rows(self.db_path)
+            detail = get_skin_detail(self.db_path, "1-1")
+
+        by_key = {row.source_key: row for row in rows}
+        self.assertEqual(by_key["1-1"].emotion_score, 77)
+        self.assertEqual(by_key["1-1"].emotion_score_source, "human_final_truth")
+        self.assertEqual(by_key["1-1"].emotion_status, EmotionStatus.VALIDATED.value)
+        self.assertEqual(by_key["1-1"].emotion_qualified_aspect_count, 1)
+        # Human no-relevant truth blocks a conflicting inferred score.
+        self.assertIsNone(by_key["1-2"].emotion_score)
+        self.assertIsNone(by_key["1-2"].emotion_score_source)
+        self.assertEqual(by_key["1-2"].emotion_status, EmotionStatus.MISSING.value)
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail.final_truth_score["observed_emotion_score"], 77)
+        self.assertEqual(detail.aspect_scores, {})
+
+    def test_selected_comment_model_scores_skin_without_human_truth(self):
+        self.add_skin("1-1", date(2026, 1, 1))
+        model_score = {
+            "source_key": "1-1",
+            "hero_name": "测试英雄",
+            "skin_name": "皮肤1-1",
+            "observed_emotion_score": 68,
+            "score_status": "partial_model_comments",
+            "aspect_scores": {"in_game_feel": 68},
+            "aspect_coverage": 1 / 6,
+            "relevant_row_count": 7,
+            "comment_row_count": 20,
+            "run_id": "run-comments",
+            "model_name": "test-model",
+            "quality_gate_passed": False,
+        }
+        with (
+            patch.object(dashboard_query, "_batch_final_truth_scores", return_value={}),
+            patch.object(
+                dashboard_query,
+                "_batch_model_comment_scores",
+                return_value={"1-1": model_score},
+            ),
+        ):
+            rows = get_portfolio_rows(self.db_path)
+            detail = get_skin_detail(self.db_path, "1-1")
+
+        self.assertEqual(rows[0].emotion_score, 68)
+        self.assertEqual(rows[0].emotion_score_source, "selected_comment_model")
+        self.assertEqual(rows[0].emotion_run_id, "run-comments")
+        self.assertEqual(rows[0].emotion_qualified_aspect_count, 1)
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail.model_comment_score, model_score)
+
+    def test_comment_scorer_requires_complete_frozen_model_annotations(self):
+        candidate_rows = [
+            {
+                "evidence_id": evidence_id,
+                "source_key": "1-1",
+                "hero_name": "测试英雄",
+                "skin_name": "皮肤1-1",
+                "mapping_scope": "exact_skin",
+                "is_synthetic": 0,
+                "quarantine_reason": None,
+                "input_class": "public_comment",
+            }
+            for evidence_id in (1, 2)
+        ]
+        annotation_rows = [
+            {
+                "evidence_id": evidence_id,
+                "source_key": "1-1",
+                "annotator_kind": "model",
+                "extractor_digest": "digest",
+                "prompt_hash": "prompt-hash",
+                "relevance": "relevant",
+                "aspects": ["visual_appeal"],
+                "polarities": {"visual_appeal": 1},
+            }
+            for evidence_id in (1, 2)
+        ]
+
+        class FakeEvidenceRepository:
+            def __init__(self, _db_path):
+                pass
+
+            def get_run(self, _run_id):
+                return {
+                    "model_selection_status": "frozen",
+                    "model_name": "model-a",
+                    "model_digest": "digest",
+                    "prompt_hash": "prompt-hash",
+                    "model_selection_metrics": {
+                        "selected_quality_gate_passed": False,
+                    },
+                }
+
+            def list_annotation_candidates(self, _run_id):
+                return candidate_rows
+
+            def list_annotations(self, _run_id, *, annotator_id):
+                self.annotator_id = annotator_id
+                return annotation_rows
+
+        with patch.object(
+            dashboard_query,
+            "EmotionEvidenceRepository",
+            FakeEvidenceRepository,
+        ):
+            scores = dashboard_query._batch_model_comment_scores(
+                self.db_path, run_id="run-test"
+            )
+            annotation_rows.pop()
+            incomplete = dashboard_query._batch_model_comment_scores(
+                self.db_path, run_id="run-test"
+            )
+
+        self.assertEqual(scores["1-1"]["observed_emotion_score"], 75)
+        self.assertEqual(scores["1-1"]["comment_row_count"], 2)
+        self.assertEqual(scores["1-1"]["model_name"], "model-a")
+        self.assertFalse(scores["1-1"]["quality_gate_passed"])
+        self.assertEqual(incomplete, {})
+
+    def test_final_truth_artifact_drift_fails_closed(self):
+        self.add_skin("1-1", date(2026, 1, 1))
+        self.add_skin("1-2", date(2026, 1, 1))
+        report = self.write_final_truth_scores()
+        truth = Path(self.tmp.name) / "human-truth.csv"
+        truth.write_text("changed after scoring\n", encoding="utf-8")
+
+        with patch.object(dashboard_query, "FINAL_TRUTH_SCORES_PATH", report):
+            rows = get_portfolio_rows(self.db_path)
+        self.assertIsNone(rows[0].emotion_score)
+        self.assertIsNone(rows[0].emotion_score_source)
+
+    def test_final_truth_score_tamper_fails_closed(self):
+        self.add_skin("1-1", date(2026, 1, 1))
+        self.add_skin("1-2", date(2026, 1, 1))
+        report = self.write_final_truth_scores()
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        payload["rows"][0]["observed_emotion_score"] = 78
+        report.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+        with patch.object(dashboard_query, "FINAL_TRUTH_SCORES_PATH", report):
+            rows = get_portfolio_rows(self.db_path)
+        self.assertTrue(all(row.emotion_score is None for row in rows))
 
     def test_portfolio_rows_merge_skin_cash_emotion(self):
         self.add_skin("1-1", date(2026, 1, 1))

@@ -52,7 +52,7 @@ def render_filter_sidebar(db_path: str | Path) -> DashboardFilters:
 
     st.sidebar.divider()
     emotion = st.sidebar.segmented_control(
-        "情绪证据状态", ["全部", "有验证结果", "缺少结果"], default="全部", key=KEY_EMOTION,
+        "情绪来源状态", ["全部", "有情绪分", "无情绪分"], default="全部", key=KEY_EMOTION,
     )
     cash = st.sidebar.segmented_control(
         "现金证据状态", ["全部", "有记录", "缺少记录"], default="全部", key=KEY_CASH,
@@ -73,7 +73,7 @@ def current_filters() -> DashboardFilters:
         v = st.session_state.get(key)
         return v if isinstance(v, date) else None
 
-    emotion_map = {"全部": "all", "有验证结果": "validated", "缺少结果": "missing"}
+    emotion_map = {"全部": "all", "有情绪分": "validated", "无情绪分": "missing"}
     cash_map = {"全部": "all", "有记录": "has_record", "缺少记录": "missing"}
 
     return DashboardFilters(

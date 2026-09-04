@@ -18,8 +18,17 @@ ATTRIBUTION_METHOD_LABELS: dict[str, str] = {
 
 # ── Value-status labels (emotional / cash) ─────────────────────────────────
 EMOTION_STATUS_LABELS: dict[str, str] = {
-    "validated": "已验证",
-    "missing": "缺结果",
+    "validated": "有来源",
+    "missing": "无来源",
+}
+EMOTION_SOURCE_LABELS: dict[str, str] = {
+    "human_final_truth": "人工最终真值",
+    "selected_comment_model": "评论模型评分",
+    "published_rule_engine": "已发布模型评分",
+}
+EMOTION_REASON_LABELS: dict[str, str] = {
+    "no_relevant_final_truth": "人工审核未发现相关情绪",
+    "no_relevant_model_comments": "评论模型未发现相关情绪",
 }
 CASH_STATUS_LABELS: dict[str, str] = {
     "has_record": "有记录",
@@ -48,6 +57,16 @@ def attribution_label(method: str | None) -> str:
 
 def emotion_status_label(status: str) -> str:
     return EMOTION_STATUS_LABELS.get(status, status)
+
+
+def emotion_source_label(source: str | None) -> str:
+    if not source:
+        return ""
+    return EMOTION_SOURCE_LABELS.get(source, str(source))
+
+
+def emotion_reason_label(reason: str) -> str:
+    return EMOTION_REASON_LABELS.get(reason, reason)
 
 
 def cash_status_label(status: str) -> str:

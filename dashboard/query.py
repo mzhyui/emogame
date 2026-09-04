@@ -9,6 +9,9 @@ crash on an empty or partial database.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 import sqlite3
 from collections import defaultdict
 from datetime import date, timedelta
@@ -19,6 +22,7 @@ from dashboard.format import CASH_PRIORITY
 from dashboard.models import (
     CashStatus,
     Completeness,
+    EmotionScoreSource,
     EmotionStatus,
     PortfolioSkinRow,
     PortfolioSummary,
@@ -32,7 +36,23 @@ from data.sqlite_read import connect_readonly, table_exists
 from feature_engineering.pipeline import FeatureBuilder
 from feature_engineering.features import MarketValidationSignals
 from models.emotion_evidence import signal_values_from_profile
+from models.emotion_workflow import parse_review_pack
+from models.final_truth_emotion import (
+    FINAL_TRUTH_POLICY,
+    FINAL_TRUTH_SCORER_VERSION,
+    final_truth_annotation_digest,
+    score_observed_annotation_rows,
+    score_final_truth_rows,
+)
 from models.rule_engine import RuleEngine
+
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+FINAL_TRUTH_SCORES_PATH = (
+    REPOSITORY_ROOT
+    / "data/emotion_evidence/runs/20260902-current100-v1/final-truth-scores.json"
+)
+DEFAULT_EMOTION_RUN_ID = FINAL_TRUTH_SCORES_PATH.parent.name
 
 
 # ── Default analysis period ────────────────────────────────────────────────
@@ -157,6 +177,227 @@ def _batch_emotion_evaluations(
     return validated
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _batch_final_truth_scores(
+    score_path: str | Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Load the human-final-truth score artifact and fail closed on drift.
+
+    The score report is accepted only when its scorer contract matches and its
+    declared source CSV still has the bound SHA-256. Invalid rows, duplicate
+    identities, missing files, and malformed JSON make the entire source
+    unavailable so the UI shows blanks instead of questionable numbers.
+    """
+    path = Path(score_path) if score_path is not None else FINAL_TRUTH_SCORES_PATH
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return {}
+        if payload.get("schema_version") != 1:
+            return {}
+        if payload.get("scorer_version") != FINAL_TRUTH_SCORER_VERSION:
+            return {}
+        if payload.get("truth_policy") != FINAL_TRUTH_POLICY:
+            return {}
+
+        truth_artifact = payload.get("truth_artifact")
+        truth_sha256 = payload.get("truth_sha256")
+        if not isinstance(truth_artifact, str) or not isinstance(truth_sha256, str):
+            return {}
+        truth_path = Path(truth_artifact)
+        if not truth_path.is_absolute():
+            truth_path = REPOSITORY_ROOT / truth_path
+        if not truth_path.is_file() or _sha256_file(truth_path) != truth_sha256:
+            return {}
+        truth_rows = parse_review_pack(truth_path)
+        if payload.get("truth_rows") != len(truth_rows):
+            return {}
+        if payload.get("truth_annotations_sha256") != final_truth_annotation_digest(
+            truth_rows
+        ):
+            return {}
+        recomputed = score_final_truth_rows(truth_rows)
+        if payload.get("truth_skins") != len(recomputed):
+            return {}
+
+        raw_rows = payload.get("rows")
+        if not isinstance(raw_rows, list):
+            return {}
+        expected_catalog_size = payload.get("catalog_skins")
+        if expected_catalog_size is not None and expected_catalog_size != len(raw_rows):
+            return {}
+
+        scores: dict[str, dict[str, Any]] = {}
+        for raw in raw_rows:
+            if not isinstance(raw, dict):
+                return {}
+            source_key = raw.get("source_key")
+            if not isinstance(source_key, str) or not source_key or source_key in scores:
+                return {}
+            observed = raw.get("observed_emotion_score")
+            if observed is not None:
+                if (
+                    isinstance(observed, bool)
+                    or not isinstance(observed, (int, float))
+                    or not math.isfinite(float(observed))
+                    or not 0 <= float(observed) <= 100
+                ):
+                    return {}
+                if not float(observed).is_integer():
+                    return {}
+            aspect_scores = raw.get("aspect_scores") or {}
+            if not isinstance(aspect_scores, dict):
+                return {}
+            for value in aspect_scores.values():
+                if value is None:
+                    continue
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    or not 0 <= float(value) <= 100
+                ):
+                    return {}
+            expected = recomputed.get(source_key)
+            if expected is not None:
+                for field, expected_value in expected.to_dict().items():
+                    if raw.get(field) != expected_value:
+                        return {}
+            elif any((
+                raw.get("score_status") != "no_final_truth_rows",
+                raw.get("review_row_count") != 0,
+                raw.get("relevant_row_count") != 0,
+                raw.get("observed_emotion_score") is not None,
+                raw.get("complete_six_aspect_score") is not None,
+            )):
+                return {}
+            scores[source_key] = dict(raw)
+        return scores
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+def _final_truth_for_skin(
+    skin: dict[str, Any], scores: dict[str, dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Return a score only when both the key and catalog identity agree."""
+    row = scores.get(str(skin.get("source_key") or ""))
+    if row is None:
+        return None
+    for field in ("hero_name", "skin_name"):
+        expected = str(skin.get(field) or "")
+        observed = str(row.get(field) or "")
+        if observed and observed != expected:
+            return None
+    return row
+
+
+def _selected_model_annotator_id(model_name: str, prompt_hash: str) -> str:
+    if model_name == "deterministic-v1":
+        return model_name
+    return f"{model_name}@{prompt_hash[:12]}"
+
+
+def _batch_model_comment_scores(
+    db_path: str | Path,
+    *,
+    run_id: str = DEFAULT_EMOTION_RUN_ID,
+) -> dict[str, dict[str, Any]]:
+    """Score every fully annotated skin with exact, usable run comments.
+
+    A source is omitted unless every usable comment for that skin has an
+    annotation from the run's frozen selected model and all stored model
+    identity fields match. The score still remains null when the model finds no
+    relevant emotional aspect in those comments.
+    """
+    if not Path(db_path).is_file():
+        return {}
+    repo = EmotionEvidenceRepository(db_path)
+    run = repo.get_run(run_id)
+    if not run or run.get("model_selection_status") != "frozen":
+        return {}
+    model_name = str(run.get("model_name") or "")
+    model_digest = str(run.get("model_digest") or "")
+    prompt_hash = str(run.get("prompt_hash") or "")
+    if not model_name or not model_digest or not prompt_hash:
+        return {}
+
+    usable_candidates = {
+        int(row["evidence_id"]): row
+        for row in repo.list_annotation_candidates(run_id)
+        if row.get("mapping_scope") == "exact_skin"
+        and not row.get("is_synthetic")
+        and not row.get("quarantine_reason")
+        and str(row.get("input_class") or "public_comment") == "public_comment"
+    }
+    if not usable_candidates:
+        return {}
+    annotator_id = _selected_model_annotator_id(model_name, prompt_hash)
+    annotations = repo.list_annotations(run_id, annotator_id=annotator_id)
+
+    candidate_ids: dict[str, set[int]] = defaultdict(set)
+    annotated_ids: dict[str, set[int]] = defaultdict(set)
+    valid_annotations: list[dict[str, Any]] = []
+    invalid_sources: set[str] = set()
+    for evidence_id, candidate in usable_candidates.items():
+        candidate_ids[str(candidate["source_key"])].add(evidence_id)
+    for annotation in annotations:
+        evidence_id = int(annotation["evidence_id"])
+        candidate = usable_candidates.get(evidence_id)
+        if candidate is None:
+            continue
+        source_key = str(candidate["source_key"])
+        if (
+            str(annotation.get("source_key") or "") != source_key
+            or annotation.get("annotator_kind") != "model"
+            or annotation.get("extractor_digest") != model_digest
+            or annotation.get("prompt_hash") != prompt_hash
+        ):
+            invalid_sources.add(source_key)
+            continue
+        annotated_ids[source_key].add(evidence_id)
+        valid_annotations.append(annotation)
+
+    scored = score_observed_annotation_rows(
+        valid_annotations, source_kind="model_comments"
+    )
+    quality_gate_passed = bool(
+        (run.get("model_selection_metrics") or {}).get(
+            "selected_quality_gate_passed", False
+        )
+    )
+    results: dict[str, dict[str, Any]] = {}
+    for source_key, expected_ids in candidate_ids.items():
+        if source_key in invalid_sources or annotated_ids[source_key] != expected_ids:
+            continue
+        score = scored.get(source_key)
+        if score is None:
+            continue
+        sample_candidate = usable_candidates[min(expected_ids)]
+        results[source_key] = {
+            **score.to_dict(),
+            "hero_name": str(sample_candidate.get("hero_name") or ""),
+            "skin_name": str(sample_candidate.get("skin_name") or ""),
+            "comment_row_count": len(expected_ids),
+            "annotation_source": "selected_comment_model",
+            "run_id": run_id,
+            "model_name": model_name,
+            "model_digest": model_digest,
+            "prompt_hash": prompt_hash,
+            "quality_gate_passed": quality_gate_passed,
+        }
+    return results
+
+
 # ── Portfolio rows ───────────────────────────────────────────────────────────
 def get_portfolio_rows(
     db_path: str | Path,
@@ -190,6 +431,8 @@ def get_portfolio_rows(
         db_path, period_start=period_start, period_end=period_end
     )
     validated = _batch_emotion_evaluations(db_path)
+    final_truth_scores = _batch_final_truth_scores()
+    model_comment_scores = _batch_model_comment_scores(db_path)
     diagnostics = EmotionEvidenceRepository(db_path).list_active_run_profiles()
 
     rows: list[PortfolioSkinRow] = []
@@ -204,18 +447,71 @@ def get_portfolio_rows(
             continue
 
         evaluation = validated.get(source_key)
+        final_truth = _final_truth_for_skin(skin, final_truth_scores)
+        has_declared_truth = bool(
+            final_truth
+            and final_truth.get("score_status") != "no_final_truth_rows"
+        )
+        model_comment = (
+            None
+            if has_declared_truth
+            else _final_truth_for_skin(skin, model_comment_scores)
+        )
         diagnostic = diagnostics.get(source_key)
-        is_validated = evaluation is not None
+        # Declared human truth governs every reviewed skin, including an
+        # explicit no-relevant result. The selected comment scorer covers other
+        # fully annotated sources; a published profile is the final fallback.
+        if has_declared_truth:
+            final_truth_score = final_truth.get("observed_emotion_score")
+            truth_aspects = final_truth.get("aspect_scores") or {}
+            emotion_score = (
+                int(final_truth_score) if final_truth_score is not None else None
+            )
+            emotion_source = (
+                EmotionScoreSource.HUMAN_FINAL_TRUTH.value
+                if emotion_score is not None
+                else None
+            )
+            emotion_score_status = str(final_truth.get("score_status") or "") or None
+            perceived_value = truth_aspects.get("value_for_money")
+            qualified_aspect_count = sum(
+                value is not None for value in truth_aspects.values()
+            )
+            emotion_run_id = DEFAULT_EMOTION_RUN_ID
+        elif model_comment is not None:
+            model_score = model_comment.get("observed_emotion_score")
+            model_aspects = model_comment.get("aspect_scores") or {}
+            emotion_score = int(model_score) if model_score is not None else None
+            emotion_source = (
+                EmotionScoreSource.SELECTED_COMMENT_MODEL.value
+                if emotion_score is not None
+                else None
+            )
+            emotion_score_status = (
+                str(model_comment.get("score_status") or "") or None
+            )
+            perceived_value = model_aspects.get("value_for_money")
+            qualified_aspect_count = sum(
+                value is not None for value in model_aspects.values()
+            )
+            emotion_run_id = str(model_comment.get("run_id") or "") or None
+        elif evaluation is not None:
+            emotion_score = evaluation.evaluation_score
+            emotion_source = EmotionScoreSource.PUBLISHED_RULE_ENGINE.value
+            emotion_score_status = "published_qualified"
+            perceived_value = (evaluation.aspect_scores or {}).get("value_for_money")
+            qualified_aspect_count = diagnostic.qualified_aspect_count if diagnostic else 0
+            emotion_run_id = evaluation.evidence_run_id
+        else:
+            emotion_score = None
+            emotion_source = None
+            emotion_score_status = None
+            perceived_value = None
+            qualified_aspect_count = diagnostic.qualified_aspect_count if diagnostic else 0
+            emotion_run_id = None
+        is_validated = emotion_score is not None
         emotion_status = (
             EmotionStatus.VALIDATED.value if is_validated else EmotionStatus.MISSING.value
-        )
-        # Emotion score and perceived value are populated ONLY for validated
-        # rows. Insufficient results stay missing in KPIs, charts, and rankings.
-        emotion_score = evaluation.evaluation_score if is_validated else None
-        perceived_value = (
-            (evaluation.aspect_scores or {}).get("value_for_money")
-            if is_validated
-            else None
         )
 
         cash = cash_by_key.get(source_key) or {}
@@ -239,21 +535,31 @@ def get_portfolio_rows(
                 primary_asset_url=skin.get("primary_asset_url"),
                 emotion_score=emotion_score,
                 emotion_validated=is_validated,
+                emotion_score_source=emotion_source,
+                emotion_score_status=emotion_score_status,
                 perceived_value=perceived_value,
                 emotion_status=emotion_status,
-                emotion_run_id=evaluation.evidence_run_id if is_validated else None,
+                emotion_run_id=emotion_run_id,
                 emotion_ci_low=(
-                    (evaluation.score_ci or {}).get("low") if is_validated else None
+                    (evaluation.score_ci or {}).get("low")
+                    if evaluation is not None
+                    and emotion_source == EmotionScoreSource.PUBLISHED_RULE_ENGINE.value
+                    else None
                 ),
                 emotion_ci_high=(
-                    (evaluation.score_ci or {}).get("high") if is_validated else None
+                    (evaluation.score_ci or {}).get("high")
+                    if evaluation is not None
+                    and emotion_source == EmotionScoreSource.PUBLISHED_RULE_ENGINE.value
+                    else None
                 ),
                 emotion_failure_reasons=(
-                    list(diagnostic.validation_reasons) if diagnostic else []
+                    [emotion_score_status]
+                    if emotion_score is None and emotion_score_status
+                    else list(diagnostic.validation_reasons)
+                    if diagnostic and emotion_score is None
+                    else []
                 ),
-                emotion_qualified_aspect_count=(
-                    diagnostic.qualified_aspect_count if diagnostic else 0
-                ),
+                emotion_qualified_aspect_count=qualified_aspect_count,
                 cash_attributed_revenue=cash_revenue_cny,
                 cash_sales_volume=cash.get("sales_volume"),
                 cash_avg_spend_cny=cash.get("avg_spend_cny"),
@@ -311,8 +617,33 @@ def get_portfolio_summary(
     catalog_validated = validated
     if db_path is not None:
         try:
-            catalog_size = int(SkinRepository(db_path).stats().get("skins") or 0)
-            catalog_validated = len(_batch_emotion_evaluations(db_path))
+            catalog = SkinRepository(db_path).list_skins(limit=None)
+            catalog_size = len(catalog)
+            published = _batch_emotion_evaluations(db_path)
+            truth_scores = _batch_final_truth_scores()
+            model_scores = _batch_model_comment_scores(db_path)
+            available_keys = set()
+            for skin in catalog:
+                truth_score = _final_truth_for_skin(skin, truth_scores)
+                has_declared_truth = bool(
+                    truth_score
+                    and truth_score.get("score_status") != "no_final_truth_rows"
+                )
+                model_score = (
+                    None
+                    if has_declared_truth
+                    else _final_truth_for_skin(skin, model_scores)
+                )
+                source_key = str(skin["source_key"])
+                if has_declared_truth:
+                    score = truth_score.get("observed_emotion_score")
+                elif model_score is not None:
+                    score = model_score.get("observed_emotion_score")
+                else:
+                    score = getattr(published.get(source_key), "evaluation_score", None)
+                if score is not None:
+                    available_keys.add(source_key)
+            catalog_validated = len(available_keys)
         except Exception:
             catalog_size = 0
             catalog_validated = 0
@@ -426,8 +757,19 @@ def get_skin_detail(
     if skin is None:
         return None
 
-    # Emotion: only a published, provenance-qualified profile can validate.
+    # Emotion: human final truth takes precedence over the selected comment
+    # scorer, then a published qualified profile. Diagnostics never fill blank.
     evaluation: dict[str, Any] | None = None
+    final_truth_score = _final_truth_for_skin(skin, _batch_final_truth_scores())
+    has_declared_truth = bool(
+        final_truth_score
+        and final_truth_score.get("score_status") != "no_final_truth_rows"
+    )
+    model_comment_score = (
+        None
+        if has_declared_truth
+        else _final_truth_for_skin(skin, _batch_model_comment_scores(db_path))
+    )
     aspect_scores: dict[str, Any] = {}
     signal_repo = MarketSignalRepository(db_path)
     try:
@@ -471,6 +813,8 @@ def get_skin_detail(
         source_key=source_key,
         skin=skin,
         evaluation=evaluation,
+        final_truth_score=final_truth_score,
+        model_comment_score=model_comment_score,
         aspect_scores=aspect_scores,
         cash_value=cash_value,
         sales_gap={},

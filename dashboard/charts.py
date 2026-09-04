@@ -2,7 +2,7 @@
 
 Uses Streamlit-native charts (consistent with the existing app.py) and stays
 explicit about empty states instead of fabricating data. Every chart that
-depends on emotional scores shows a clear placeholder when none are validated.
+depends on emotional scores shows a clear placeholder when no source exists.
 """
 
 from __future__ import annotations
@@ -88,16 +88,11 @@ def release_revenue_timeline(releases: list[dict[str, Any]], revenue: list[dict[
 
 
 def emotion_vs_cash_scatter(rows: list[PortfolioSkinRow]) -> None:
-    """Scatter of emotional score vs attributed cash revenue.
-
-    Currently no skin has a validated emotional score, so this shows an honest
-    empty state rather than plotting prior scores as if they were validated.
-    """
+    """Scatter of source-backed emotional score vs attributed cash revenue."""
     validated = [r for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value]
     if not validated:
         render_empty_state(
-            "暂无可验证情绪分的皮肤，无法绘制情绪分 × 现金价值散点图。"
-            "情绪分只来自持久化信号经 RuleEngine 计算的结果；当前信号表为空。",
+            "暂无具有可用情绪来源的皮肤，无法绘制情绪分 × 现金价值散点图。",
         )
         return
     df = pd.DataFrame([
@@ -112,12 +107,11 @@ def emotion_vs_cash_scatter(rows: list[PortfolioSkinRow]) -> None:
 
 
 def top_validated_ranking(rows: list[PortfolioSkinRow], by: str = "emotion") -> None:
-    """Cohort-only leaderboard of provenance-qualified skins."""
+    """Leaderboard containing only skins with an explicit emotion source."""
     validated = [r for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value]
     if not validated:
         render_empty_state(
-            "当前感知情绪队列尚未发布，或未达到 80/100 发布门槛。"
-            "只有持久化、来源合格且 validation_status == evidence_validated 的皮肤才能进入排行。",
+            "当前没有人工最终真值分或已发布模型分，排行留空。",
         )
         return
     key = "emotion_score" if by == "emotion" else "cash_attributed_revenue"
@@ -160,7 +154,7 @@ def aspect_radar(aspect_scores: dict[str, int | None]) -> None:
     """Seven-dimension aspect scores as a horizontal bar (no fabrication)."""
     present = {k: v for k, v in aspect_scores.items() if v is not None}
     if not present:
-        render_empty_state("当前皮肤没有可审计的维度评分；系统只显示官方先验和缺失证据。")
+        render_empty_state("当前皮肤没有可用情绪来源，维度分留空。")
         return
     df = pd.DataFrame([
         {"维度": ASPECT_LABELS.get(k, k), "分数": v} for k, v in present.items()

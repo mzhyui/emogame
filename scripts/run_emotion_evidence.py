@@ -52,6 +52,11 @@ from models.emotion_workflow import (  # noqa: E402
     validate_cohort_manifest,
     write_review_pack,
 )
+from models.final_truth_emotion import (  # noqa: E402
+    FINAL_TRUTH_ANNOTATOR_KIND,
+    FINAL_TRUTH_POLICY,
+    final_truth_annotation_digest,
+)
 
 
 DEFAULT_RUN_ID = "20260902-current100-v1"
@@ -66,7 +71,9 @@ DEFAULT_WARM_COMMENTS = Path(
 )
 EXTRACTOR_IDS = ("deterministic-v1", "qwen3.5:4b", "qwen3.5:27b")
 MIN_DEVELOPMENT_JUDGMENTS = 400
+MIN_FINAL_TRUTH_JUDGMENTS = 200
 MIN_LOCKED_JUDGMENTS = 200
+FINAL_TRUTH_KIND = FINAL_TRUTH_ANNOTATOR_KIND
 
 
 def _load_json(path: Path) -> Any:
@@ -103,6 +110,46 @@ def _run_contract(repo: EmotionEvidenceRepository, run_id: str) -> dict[str, Any
     if run is None:
         raise ValueError(f"emotion run is not initialized: {run_id}")
     return run
+
+
+def _truth_annotations(
+    repo: EmotionEvidenceRepository,
+    run_id: str,
+    *,
+    phase: str | None = None,
+) -> tuple[list[dict[str, Any]], str]:
+    """Return the explicitly declared final truth, else adjudicated labels."""
+    final_truth = repo.list_annotations(
+        run_id, phase=phase, annotator_kind=FINAL_TRUTH_KIND
+    )
+    if final_truth:
+        run = _run_contract(repo, run_id)
+        phases = {str(row["phase"]) for row in final_truth}
+        for truth_phase in phases:
+            phase_rows = [row for row in final_truth if row["phase"] == truth_phase]
+            expected = (run.get("input_hashes") or {}).get(
+                f"final-truth-annotations:{truth_phase}"
+            )
+            if not expected:
+                raise ValueError(
+                    f"final truth for {truth_phase} has no bound annotation digest"
+                )
+            if final_truth_annotation_digest(phase_rows) != expected:
+                raise ValueError(
+                    f"final truth for {truth_phase} differs from its bound digest"
+                )
+        return final_truth, FINAL_TRUTH_KIND
+    return (
+        repo.list_annotations(run_id, phase=phase, annotator_kind="adjudicated"),
+        "adjudicated",
+    )
+
+
+def _development_minimum(truth_kind: str) -> int:
+    """Use the declared-complete single-truth floor only for that policy."""
+    if truth_kind == FINAL_TRUTH_KIND:
+        return MIN_FINAL_TRUTH_JUDGMENTS
+    return MIN_DEVELOPMENT_JUDGMENTS
 
 
 def _extractor_prompt_hash(extractor_id: str) -> str:
@@ -544,6 +591,13 @@ def command_annotate_local(args: argparse.Namespace) -> int:
     _run_contract(repo, run_id)
     prompt_hash = model_prompt_hash()
     annotator_id = _extractor_annotator_id(args.model, prompt_hash=prompt_hash)
+    phases = _phase_by_source(manifest)
+    truth_ids: set[int] | None = None
+    if args.truth_only:
+        truth, truth_kind = _truth_annotations(repo, run_id, phase=args.phase)
+        if truth_kind != FINAL_TRUTH_KIND or not truth:
+            raise ValueError("--truth-only requires declared final truth for the phase")
+        truth_ids = {int(row["evidence_id"]) for row in truth}
     existing = {
         int(row["evidence_id"])
         for row in repo.list_annotations(run_id, annotator_id=annotator_id)
@@ -555,6 +609,8 @@ def command_annotate_local(args: argparse.Namespace) -> int:
         and not row.get("quarantine_reason")
         and row.get("mapping_scope") == "exact_skin"
         and not row.get("is_synthetic")
+        and (args.phase is None or phases[str(row["source_key"])] == args.phase)
+        and (truth_ids is None or int(row["evidence_id"]) in truth_ids)
     ]
     candidates = pending_candidates[: args.limit or None]
     if not args.apply:
@@ -564,6 +620,8 @@ def command_annotate_local(args: argparse.Namespace) -> int:
                     "run_id": run_id,
                     "model": args.model,
                     "annotator_id": annotator_id,
+                    "phase": args.phase or "all",
+                    "truth_only": bool(args.truth_only),
                     "prompt_hash": prompt_hash,
                     "candidates": len(candidates),
                     "pending_before_run": len(pending_candidates),
@@ -577,7 +635,6 @@ def command_annotate_local(args: argparse.Namespace) -> int:
         )
         return 0
     extractor_digest = _ollama_model_digest(args.host, args.model, args.timeout)
-    phases = _phase_by_source(manifest)
     stored = 0
     for row in candidates:
         result = _model_annotation(
@@ -602,6 +659,8 @@ def command_annotate_local(args: argparse.Namespace) -> int:
                 "run_id": run_id,
                 "model": args.model,
                 "annotator_id": annotator_id,
+                "phase": args.phase or "all",
+                "truth_only": bool(args.truth_only),
                 "prompt_hash": prompt_hash,
                 "extractor_digest": extractor_digest,
                 "processed": len(candidates),
@@ -620,6 +679,9 @@ def command_import_review(args: argparse.Namespace) -> int:
     rows = parse_review_pack(args.input)
     if not rows:
         raise ValueError("review import is empty")
+    evidence_ids = [int(row["evidence_id"]) for row in rows]
+    if len(evidence_ids) != len(set(evidence_ids)):
+        raise ValueError("review import contains duplicate evidence IDs")
     phases = {str(row["phase"]) for row in rows}
     if len(phases) != 1:
         raise ValueError("one review import must contain exactly one phase")
@@ -642,6 +704,18 @@ def command_import_review(args: argparse.Namespace) -> int:
             human_reviewers[
                 (int(annotation["evidence_id"]), str(annotation["phase"]))
             ].add(str(annotation["annotator_id"]))
+    if args.kind == FINAL_TRUTH_KIND:
+        existing_truth = repo.list_annotations(
+            args.run_id, phase=import_phase, annotator_kind=FINAL_TRUTH_KIND
+        )
+        existing_ids = {
+            str(annotation["annotator_id"]) for annotation in existing_truth
+        }
+        if existing_ids and existing_ids != {args.reviewer_id}:
+            raise ValueError(
+                f"final truth for {import_phase} is already bound to "
+                + ",".join(sorted(existing_ids))
+            )
     stored = 0
     for row in rows:
         evidence = candidates.get(int(row["evidence_id"]))
@@ -654,11 +728,22 @@ def command_import_review(args: argparse.Namespace) -> int:
                 f"adjudication requires two preserved human labels: {row['evidence_id']}"
             )
     if args.apply:
+        input_name = (
+            f"final-truth:{import_phase}"
+            if args.kind == FINAL_TRUTH_KIND
+            else f"review:{import_phase}:{args.kind}:{args.reviewer_id}"
+        )
         repo.bind_input_hash(
             args.run_id,
-            f"review:{import_phase}:{args.kind}:{args.reviewer_id}",
+            input_name,
             sha256_file(args.input),
         )
+        if args.kind == FINAL_TRUTH_KIND:
+            repo.bind_input_hash(
+                args.run_id,
+                f"final-truth-annotations:{import_phase}",
+                final_truth_annotation_digest(rows),
+            )
     for row in rows:
         annotation = {
             **row,
@@ -670,15 +755,31 @@ def command_import_review(args: argparse.Namespace) -> int:
         if args.apply:
             repo.add_annotation(annotation)
             stored += 1
+    if args.apply and args.kind == FINAL_TRUTH_KIND:
+        stored_truth = repo.list_annotations(
+            args.run_id, phase=import_phase, annotator_kind=FINAL_TRUTH_KIND
+        )
+        if final_truth_annotation_digest(stored_truth) != final_truth_annotation_digest(
+            rows
+        ):
+            raise ValueError("stored final truth differs from the imported artifact")
     print(
         json.dumps(
             {
                 "run_id": args.run_id,
                 "reviewer_id": args.reviewer_id,
                 "kind": args.kind,
+                "truth_policy": (
+                    FINAL_TRUTH_POLICY if args.kind == FINAL_TRUTH_KIND else None
+                ),
                 "rows": len(rows),
                 "stored": stored,
                 "input_sha256": sha256_file(args.input),
+                "annotation_sha256": (
+                    final_truth_annotation_digest(rows)
+                    if args.kind == FINAL_TRUTH_KIND
+                    else None
+                ),
                 "applied": bool(args.apply),
             },
             ensure_ascii=False,
@@ -691,9 +792,10 @@ def command_import_review(args: argparse.Namespace) -> int:
 def command_select_model(args: argparse.Namespace) -> int:
     repo = EmotionEvidenceRepository(args.db)
     run = _run_contract(repo, args.run_id)
-    truth = repo.list_annotations(
-        args.run_id, phase="development", annotator_kind="adjudicated"
+    truth, truth_kind = _truth_annotations(
+        repo, args.run_id, phase="development"
     )
+    minimum_judgments = _development_minimum(truth_kind)
     results: dict[str, Any] = {}
     digests: dict[str, str] = {}
     for candidate_id in EXTRACTOR_IDS:
@@ -702,8 +804,8 @@ def command_select_model(args: argparse.Namespace) -> int:
             args.run_id, phase="development", annotator_id=annotator_id
         )
         metrics = calibration_metrics(truth, predictions)
-        metrics["minimum_n"] = MIN_DEVELOPMENT_JUDGMENTS
-        metrics["sample_complete"] = metrics["n"] >= MIN_DEVELOPMENT_JUDGMENTS
+        metrics["minimum_n"] = minimum_judgments
+        metrics["sample_complete"] = metrics["n"] >= minimum_judgments
         metrics["passed"] = bool(metrics["passed"] and metrics["sample_complete"])
         results[candidate_id] = metrics
         candidate_digests = {
@@ -749,9 +851,16 @@ def command_select_model(args: argparse.Namespace) -> int:
     summary = {
         "run_id": args.run_id,
         "development_truth_n": len(truth),
+        "truth_kind": truth_kind,
+        "truth_policy": (
+            FINAL_TRUTH_POLICY if truth_kind == FINAL_TRUTH_KIND else None
+        ),
         "candidates": results,
         "selection_rule": "pass-first, aspect-F1, relevance, polarity, fixed candidate order",
         "selected": selected,
+        "selected_quality_gate_passed": bool(
+            selected and results[selected]["passed"]
+        ),
         "applied": bool(args.apply),
     }
     if selected and args.apply:
@@ -861,9 +970,7 @@ def command_gate(args: argparse.Namespace) -> int:
     gate_status = run.get(f"{args.gate}_status")
     if args.apply and gate_status != "pending":
         raise ValueError(f"{args.gate} gate has already been evaluated")
-    truth = repo.list_annotations(
-        args.run_id, phase=args.phase, annotator_kind="adjudicated"
-    )
+    truth, truth_kind = _truth_annotations(repo, args.run_id, phase=args.phase)
     prediction_phase = "production" if args.gate == "audit" else args.phase
     predictions = repo.list_annotations(
         args.run_id,
@@ -879,6 +986,10 @@ def command_gate(args: argparse.Namespace) -> int:
     ):
         raise ValueError("prediction annotations do not match the frozen extractor identity")
     metrics = calibration_metrics(truth, predictions)
+    metrics["truth_kind"] = truth_kind
+    metrics["truth_policy"] = (
+        FINAL_TRUTH_POLICY if truth_kind == FINAL_TRUTH_KIND else None
+    )
     minimum_n = MIN_LOCKED_JUDGMENTS if args.gate == "calibration" else len(truth)
     metrics["minimum_n"] = minimum_n
     metrics["sample_complete"] = bool(minimum_n and metrics["n"] >= minimum_n)
@@ -925,9 +1036,9 @@ def command_validate(args: argparse.Namespace) -> int:
             prompt_hash=(str(run["prompt_hash"]) if run.get("prompt_hash") else None),
         ),
     )
-    adjudicated = repo.list_annotations(args.run_id, annotator_kind="adjudicated")
+    truth, truth_kind = _truth_annotations(repo, args.run_id)
     selected = {int(row["evidence_id"]): row for row in model_rows}
-    selected.update({int(row["evidence_id"]): row for row in adjudicated})
+    selected.update({int(row["evidence_id"]): row for row in truth})
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for evidence_id, annotation in selected.items():
         evidence = candidates.get(evidence_id)
@@ -1030,6 +1141,16 @@ def command_validate(args: argparse.Namespace) -> int:
         "extractor_id": model_id,
         "extractor_provisional": provisional_extractor,
         "extractor_identity_matches": not extractor_mismatch,
+        "truth_kind": truth_kind,
+        "truth_policy": (
+            FINAL_TRUTH_POLICY if truth_kind == FINAL_TRUTH_KIND else None
+        ),
+        "truth_annotations": len(truth),
+        "truth_annotations_sha256": (
+            final_truth_annotation_digest(truth)
+            if truth_kind == FINAL_TRUTH_KIND
+            else None
+        ),
         "reason_counts": dict(sorted(reason_counts.items())),
         "profiles_sha256": sha256_json(profile_payloads),
         "profiles": profile_payloads,
@@ -1105,6 +1226,7 @@ def command_status(args: argparse.Namespace) -> int:
     members = repo.list_cohort_members(args.run_id)
     candidates = repo.list_annotation_candidates(args.run_id)
     annotations = repo.list_annotations(args.run_id)
+    truth, truth_kind = _truth_annotations(repo, args.run_id)
     compact_run = {
         key: value
         for key, value in run.items()
@@ -1118,6 +1240,17 @@ def command_status(args: argparse.Namespace) -> int:
                 "cohort_members": len(members),
                 "evidence_items": len(candidates),
                 "annotations": len(annotations),
+                "truth": {
+                    "kind": truth_kind,
+                    "policy": (
+                        FINAL_TRUTH_POLICY
+                        if truth_kind == FINAL_TRUTH_KIND
+                        else None
+                    ),
+                    "annotations": len(truth),
+                    "skins": len({row["source_key"] for row in truth}),
+                    "phases": dict(Counter(row["phase"] for row in truth)),
+                },
                 "public_status": repo.latest_cohort_status(),
             },
             ensure_ascii=False,
@@ -1193,15 +1326,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ollama HTTP timeout in seconds (default: 120; do not pass milliseconds)",
     )
     local.add_argument("--limit", type=int, default=0)
+    local.add_argument(
+        "--phase",
+        choices=("development", "locked", "production"),
+        help="Restrict annotation to one frozen cohort phase.",
+    )
+    local.add_argument(
+        "--truth-only",
+        action="store_true",
+        help="Annotate only evidence IDs present in declared final truth.",
+    )
     local.add_argument("--apply", action="store_true")
     local.set_defaults(func=command_annotate_local)
 
-    import_review = sub.add_parser("import-review", help="Import immutable human/adjudicated labels")
+    import_review = sub.add_parser(
+        "import-review",
+        help="Import immutable human, adjudicated, or declared final-truth labels",
+    )
     import_review.add_argument("input", type=Path)
     import_review.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     import_review.add_argument("--run-id", default=DEFAULT_RUN_ID)
     import_review.add_argument("--reviewer-id", required=True)
-    import_review.add_argument("--kind", choices=("human", "adjudicated"), required=True)
+    import_review.add_argument(
+        "--kind",
+        choices=("human", "adjudicated", FINAL_TRUTH_KIND),
+        required=True,
+    )
     import_review.add_argument("--apply", action="store_true")
     import_review.set_defaults(func=command_import_review)
 
