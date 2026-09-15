@@ -243,11 +243,7 @@ def build_payload(
 
     cash_value = CashValueService(db_path).cash_value(
         source_key,
-        evaluation_score=(
-            evaluation.evaluation_score
-            if evaluation.validation_status == "evidence_validated"
-            else None
-        ),
+        evaluation_score=evaluation.evaluation_score,
         legacy_signals=market_repo.get_signals(source_key),
     )
     # Surface cash-value as a low-priority sales-evidence candidate for the
@@ -378,8 +374,6 @@ def _display_percent(value: Any) -> str:
 
 
 def score_text(evaluation: dict[str, Any]) -> str:
-    if evaluation.get("validation_status") != "evidence_validated":
-        return "N/A"
     score = evaluation["evaluation_score"]
     return str(score) if score is not None else f"{evaluation['official_prior_score']} 先验"
 
@@ -489,31 +483,28 @@ def _portfolio_overview(db_path: str) -> None:
     st.title("组合总览")
     st.caption(
         f"筛选范围内 {summary.total_skins} 个皮肤 · 王者荣耀 · 只读分析。"
-        "情绪分优先使用人工最终真值，其次使用已选评论模型，"
-        "最后回退到已发布模型分；无可用情绪来源时留空。"
+        "每个目录皮肤都生成完整六维价值分；观察值优先，缺失维度使用"
+        "显式目录估计补全，不要求发布、质量门或人工审核。"
     )
     if summary.emotion_cohort_run_id:
         st.caption(
-            "模型评分队列（固定 100 皮肤） · "
+            "现有观察队列（固定 100 皮肤） · "
             f"{summary.emotion_observation_start} 至 {summary.emotion_observation_end} · "
-            f"已发布合格 {summary.emotion_cohort_validated_count}/"
-            f"{summary.emotion_cohort_size} · "
-            f"发布状态 {summary.emotion_cohort_release_status}。"
-            "上方展示覆盖同时计入人工真值与评论模型探索分；"
-            "展示分不等于队列发布合格。"
+            f"已完整评分 {summary.emotion_cohort_scored_count}/"
+            f"{summary.emotion_cohort_size}。观察队列只增强对应维度，不控制评分资格。"
         )
 
     # Top KPI row.
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.metric("筛选后皮肤数", display_number(summary.total_skins))
     k2.metric(
-        "有情绪分皮肤",
-        f"{summary.validated_emotion_count}",
+        "完整评分皮肤",
+        f"{summary.scored_count}",
         help=(
-            f"目录有来源 {summary.catalog_validated_emotion_count}/"
+            f"目录完整评分 {summary.catalog_scored_count}/"
             f"{summary.catalog_size}；筛选内覆盖率 "
-            f"{display_percent(summary.validated_emotion_rate * 100)}；"
-            f"模型队列已发布 {summary.emotion_cohort_validated_count}/"
+            f"{display_percent(summary.scored_rate * 100)}；"
+            f"观察队列完整评分 {summary.emotion_cohort_scored_count}/"
             f"{summary.emotion_cohort_size}"
         ),
     )
@@ -531,7 +522,7 @@ def _portfolio_overview(db_path: str) -> None:
         display_percent(summary.evidence_completeness_rate * 100),
     )
 
-    if summary.validated_emotion_count == 0:
+    if summary.scored_count == 0:
         st.info(
             "当前筛选范围内没有可用情绪来源，情绪分与排行均留空。"
         )
@@ -549,11 +540,11 @@ def _portfolio_overview(db_path: str) -> None:
     st.divider()
     c3, c4 = st.columns(2)
     with c3:
-        st.subheader("情绪分 × 估算现金价值")
+        st.subheader("完整价值分 × 估算现金价值")
         charts.emotion_vs_cash_scatter(rows)
     with c4:
-        st.subheader("可用情绪分排行")
-        charts.top_validated_ranking(rows, by="emotion")
+        st.subheader("完整价值分排行")
+        charts.top_value_ranking(rows, by="emotion")
 
     st.divider()
     st.subheader("证据覆盖缺口摘要")

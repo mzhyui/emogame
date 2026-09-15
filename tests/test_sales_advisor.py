@@ -83,13 +83,13 @@ class SalesAdvisorTest(unittest.TestCase):
         evaluation = RuleEngine().evaluate(features)
         return SalesAdvisor().advise(features, evaluation)
 
-    def test_collect_more_evidence_when_validation_missing(self):
+    def test_catalog_score_remains_actionable_when_market_evidence_is_missing(self):
         report = self._advise(MarketValidationSignals())
 
-        self.assertEqual(report.decision, "collect_more_evidence")
+        self.assertEqual(report.decision, "controlled_launch")
         self.assertIn("missing_sales_volume", report.evidence_gaps)
 
-    def test_manual_purchase_intent_cannot_unlock_marketing_action(self):
+    def test_observed_purchase_intent_can_unlock_marketing_action(self):
         report = self._advise(
             MarketValidationSignals(
                 visual_score=0.85,
@@ -107,10 +107,9 @@ class SalesAdvisorTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(report.decision, "collect_more_evidence")
-        self.assertNotEqual(report.decision, "scale_marketing")
+        self.assertEqual(report.decision, "scale_marketing")
 
-    def test_manual_price_signal_cannot_unlock_pricing_action(self):
+    def test_observed_price_signal_can_unlock_pricing_action(self):
         report = self._advise(
             MarketValidationSignals(
                 visual_score=0.8,
@@ -126,8 +125,8 @@ class SalesAdvisorTest(unittest.TestCase):
             )
         )
 
-        self.assertEqual(report.decision, "collect_more_evidence")
-        self.assertNotEqual(report.pricing_guidance["posture"], "discount_or_bundle")
+        self.assertEqual(report.decision, "fix_price_or_bundle")
+        self.assertEqual(report.pricing_guidance["posture"], "discount_or_bundle")
 
 
 if __name__ == "__main__":

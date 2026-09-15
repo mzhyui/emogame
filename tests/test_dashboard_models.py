@@ -154,7 +154,7 @@ class DashboardQueryTests(unittest.TestCase):
         }, ensure_ascii=False), encoding="utf-8")
         return report
 
-    def test_human_final_truth_score_merges_and_missing_source_stays_blank(self):
+    def test_human_observation_overrides_one_aspect_without_gating_full_score(self):
         self.add_skin("1-1", date(2026, 1, 1))
         self.add_skin("1-2", date(2026, 2, 1))
         report = self.write_final_truth_scores()
@@ -182,18 +182,22 @@ class DashboardQueryTests(unittest.TestCase):
             detail = get_skin_detail(self.db_path, "1-1")
 
         by_key = {row.source_key: row for row in rows}
-        self.assertEqual(by_key["1-1"].emotion_score, 77)
-        self.assertEqual(by_key["1-1"].emotion_score_source, "human_final_truth")
-        self.assertEqual(by_key["1-1"].emotion_status, EmotionStatus.VALIDATED.value)
-        self.assertEqual(by_key["1-1"].emotion_qualified_aspect_count, 1)
-        # Human no-relevant truth blocks a conflicting inferred score.
-        self.assertIsNone(by_key["1-2"].emotion_score)
-        self.assertIsNone(by_key["1-2"].emotion_score_source)
-        self.assertEqual(by_key["1-2"].emotion_status, EmotionStatus.MISSING.value)
+        self.assertIsNotNone(by_key["1-1"].emotion_score)
+        self.assertEqual(by_key["1-1"].emotion_score_source, "value_present")
+        self.assertEqual(by_key["1-1"].emotion_status, EmotionStatus.SCORED.value)
+        self.assertEqual(by_key["1-1"].emotion_qualified_aspect_count, 6)
+        # A no-relevant human row no longer suppresses other value sources.
+        self.assertIsNotNone(by_key["1-2"].emotion_score)
+        self.assertEqual(by_key["1-2"].emotion_score_source, "value_present")
+        self.assertEqual(by_key["1-2"].emotion_status, EmotionStatus.SCORED.value)
         self.assertIsNotNone(detail)
         assert detail is not None
         self.assertEqual(detail.final_truth_score["observed_emotion_score"], 77)
-        self.assertEqual(detail.aspect_scores, {})
+        self.assertEqual(detail.aspect_scores["visual_appeal"], 77)
+        self.assertTrue(all(detail.aspect_scores[name] is not None for name in (
+            "visual_appeal", "in_game_feel", "craftsmanship_quality",
+            "collection_value", "value_for_money", "purchase_intent",
+        )))
 
     def test_selected_comment_model_scores_skin_without_human_truth(self):
         self.add_skin("1-1", date(2026, 1, 1))
@@ -222,13 +226,13 @@ class DashboardQueryTests(unittest.TestCase):
             rows = get_portfolio_rows(self.db_path)
             detail = get_skin_detail(self.db_path, "1-1")
 
-        self.assertEqual(rows[0].emotion_score, 68)
-        self.assertEqual(rows[0].emotion_score_source, "selected_comment_model")
-        self.assertEqual(rows[0].emotion_run_id, "run-comments")
-        self.assertEqual(rows[0].emotion_qualified_aspect_count, 1)
+        self.assertIsNotNone(rows[0].emotion_score)
+        self.assertEqual(rows[0].emotion_score_source, "value_present")
+        self.assertEqual(rows[0].emotion_qualified_aspect_count, 6)
         self.assertIsNotNone(detail)
         assert detail is not None
         self.assertEqual(detail.model_comment_score, model_score)
+        self.assertEqual(detail.aspect_scores["in_game_feel"], 68)
 
     def test_comment_scorer_requires_complete_frozen_model_annotations(self):
         candidate_rows = [
@@ -299,7 +303,7 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertFalse(scores["1-1"]["quality_gate_passed"])
         self.assertEqual(incomplete, {})
 
-    def test_final_truth_artifact_drift_fails_closed(self):
+    def test_final_truth_artifact_drift_falls_back_to_catalog_score(self):
         self.add_skin("1-1", date(2026, 1, 1))
         self.add_skin("1-2", date(2026, 1, 1))
         report = self.write_final_truth_scores()
@@ -308,10 +312,10 @@ class DashboardQueryTests(unittest.TestCase):
 
         with patch.object(dashboard_query, "FINAL_TRUTH_SCORES_PATH", report):
             rows = get_portfolio_rows(self.db_path)
-        self.assertIsNone(rows[0].emotion_score)
-        self.assertIsNone(rows[0].emotion_score_source)
+        self.assertIsNotNone(rows[0].emotion_score)
+        self.assertEqual(rows[0].emotion_score_source, "value_present")
 
-    def test_final_truth_score_tamper_fails_closed(self):
+    def test_final_truth_score_tamper_does_not_suppress_catalog_score(self):
         self.add_skin("1-1", date(2026, 1, 1))
         self.add_skin("1-2", date(2026, 1, 1))
         report = self.write_final_truth_scores()
@@ -321,19 +325,18 @@ class DashboardQueryTests(unittest.TestCase):
 
         with patch.object(dashboard_query, "FINAL_TRUTH_SCORES_PATH", report):
             rows = get_portfolio_rows(self.db_path)
-        self.assertTrue(all(row.emotion_score is None for row in rows))
+        self.assertTrue(all(row.emotion_score is not None for row in rows))
 
     def test_portfolio_rows_merge_skin_cash_emotion(self):
         self.add_skin("1-1", date(2026, 1, 1))
         self.add_skin("1-2", date(2026, 2, 1))
         self.add_skin("1-3", date(2026, 3, 1))
         self.save_cash("1-1", "csv_release_window_uplift", revenue=5000.0)
-        # Only value_score set -> aspect coverage < 0.5 -> NOT validated by the
-        # real RuleEngine gate. Emotion stays missing with no score.
+        # A single supplied dimension overrides its catalog estimate; the
+        # remaining dimensions are completed deterministically.
         MarketSignalRepository(self.db_path).upsert_signals(
             "1-1", MarketValidationSignals(value_score=80), signal_source="manual")
-        # Even a full manual aspect set is audit-only without a published,
-        # provenance-qualified emotion profile.
+        # A full manual aspect set is scored without publication.
         MarketSignalRepository(self.db_path).upsert_signals(
             "1-3",
             MarketValidationSignals(
@@ -346,19 +349,19 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual(len(rows), 3)
         by_key = {r.source_key: r for r in rows}
         self.assertIn("1-1", by_key)
-        # 1-1: cash present, but sparse signals -> emotion missing.
+        # 1-1: cash and a full value score are both present.
         self.assertEqual(by_key["1-1"].cash_status, CashStatus.HAS_RECORD.value)
         self.assertEqual(by_key["1-1"].cash_attributed_revenue, 5000.0)
-        self.assertEqual(by_key["1-1"].emotion_status, EmotionStatus.MISSING.value)
-        self.assertIsNone(by_key["1-1"].emotion_score)
-        self.assertIsNone(by_key["1-1"].perceived_value)
-        # 1-3: manual aggregates cannot confer validation.
-        self.assertEqual(by_key["1-3"].emotion_status, EmotionStatus.MISSING.value)
-        self.assertIsNone(by_key["1-3"].emotion_score)
-        self.assertIsNone(by_key["1-3"].perceived_value)
-        # skin 1-2 has neither cash nor emotion
+        self.assertEqual(by_key["1-1"].emotion_status, EmotionStatus.SCORED.value)
+        self.assertIsNotNone(by_key["1-1"].emotion_score)
+        self.assertEqual(by_key["1-1"].perceived_value, 80)
+        # 1-3 uses all supplied aspects directly.
+        self.assertEqual(by_key["1-3"].emotion_status, EmotionStatus.SCORED.value)
+        self.assertIsNotNone(by_key["1-3"].emotion_score)
+        self.assertEqual(by_key["1-3"].perceived_value, 70)
+        # Skin 1-2 has no cash but still receives a catalog score.
         self.assertEqual(by_key["1-2"].cash_status, CashStatus.MISSING.value)
-        self.assertEqual(by_key["1-2"].emotion_status, EmotionStatus.MISSING.value)
+        self.assertEqual(by_key["1-2"].emotion_status, EmotionStatus.SCORED.value)
 
     def test_cash_priority_manual_over_csv(self):
         self.add_skin("1-1", date(2026, 1, 1))
@@ -414,18 +417,17 @@ class DashboardQueryTests(unittest.TestCase):
         missing = get_portfolio_rows(Path(self.tmp.name) / "ghost.sqlite3")
         self.assertEqual(missing, [])
 
-    def test_unvalidated_not_ranked(self):
+    def test_catalog_skin_is_scored_without_opinion_data(self):
         self.add_skin("1-1", date(2026, 1, 1))
         self.save_cash("1-1", "csv_release_window_uplift", revenue=3000.0)
-        # No market_signal_records entry -> not validated, must not be counted.
+        # No market_signal_records entry is needed for a catalog estimate.
         rows = get_portfolio_rows(self.db_path)
-        self.assertEqual(rows[0].emotion_status, EmotionStatus.MISSING.value)
+        self.assertEqual(rows[0].emotion_status, EmotionStatus.SCORED.value)
         summary = get_portfolio_summary(rows)
-        self.assertEqual(summary.validated_emotion_count, 0)
+        self.assertEqual(summary.scored_count, 1)
         self.assertEqual(summary.cash_count, 1)
-        # Cash still counts toward completeness/gaps independently.
         gaps = get_coverage_gaps(rows)
-        self.assertEqual(gaps["missing_emotion"], 1)
+        self.assertEqual(gaps["missing_emotion"], 0)
         self.assertEqual(gaps["missing_cash"], 0)
 
     def test_missing_value_sorting(self):
@@ -468,7 +470,7 @@ class DashboardQueryTests(unittest.TestCase):
         self.assertEqual([row["source_key"] for row in releases], ["1-2"])
 
     def test_cash_not_injected_into_emotion(self):
-        """A cash-derived sales_volume must never validate an emotion score."""
+        """Cash remains separate from the value-present aspect calculation."""
         self.add_skin("1-1", date(2026, 1, 1))
         # Persist a cash record (sales_volume) but NO opinion/aspect signals.
         self.save_cash("1-1", "csv_release_window_uplift", revenue=3000.0, volume=500)
@@ -478,13 +480,14 @@ class DashboardQueryTests(unittest.TestCase):
         # Cash is present...
         self.assertEqual(row.cash_status, CashStatus.HAS_RECORD.value)
         self.assertEqual(row.cash_attributed_revenue, 3000.0)
-        # ...but emotion stays missing; cash never validates it.
-        self.assertEqual(row.emotion_status, EmotionStatus.MISSING.value)
-        self.assertIsNone(row.emotion_score)
-        self.assertIsNone(row.perceived_value)
+        # ...and the catalog score exists independently of that cash record.
+        self.assertEqual(row.emotion_status, EmotionStatus.SCORED.value)
+        self.assertIsNotNone(row.emotion_score)
+        self.assertIsNotNone(row.perceived_value)
+        self.assertEqual(row.emotion_score_source, "value_present")
 
-    def test_partial_emotion_is_audit_only_in_detail(self):
-        """A sparse numeric score must not escape the validation gate."""
+    def test_partial_observation_is_completed_in_detail(self):
+        """A sparse observed dimension is completed into a full score."""
         self.add_skin("1-1", date(2026, 1, 1))
         self.save_cash("1-1", "manual_exact")
         MarketSignalRepository(self.db_path).upsert_signals(
@@ -496,14 +499,13 @@ class DashboardQueryTests(unittest.TestCase):
         detail = get_skin_detail(self.db_path, "1-1")
         self.assertIsNotNone(detail)
         assert detail is not None
-        self.assertIsNone(detail.evaluation["evaluation_score"])
-        self.assertEqual(
-            detail.evaluation["validation_status"], "insufficient_market_evidence"
-        )
-        self.assertEqual(detail.aspect_scores, {})
-        self.assertIsNone(
-            detail.cash_value["metrics"]["emotional_value_efficiency_per_cny100"]
-        )
+        self.assertIsNotNone(detail.evaluation["evaluation_score"])
+        self.assertEqual(detail.evaluation["validation_status"], "value_scored")
+        self.assertEqual(detail.aspect_scores["visual_appeal"], 80)
+        self.assertTrue(all(detail.aspect_scores[name] is not None for name in (
+            "visual_appeal", "in_game_feel", "craftsmanship_quality",
+            "collection_value", "value_for_money", "purchase_intent",
+        )))
 
     def test_period_scoped_cash(self):
         """Only the cash record overlapping the selected period backs the KPI."""

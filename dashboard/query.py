@@ -148,33 +148,64 @@ def _batch_cash(
     return resolved
 
 
-# ── Emotion coverage (batch, gated by RuleEngine) ──────────────────────────
+# ── Full value scoring (batch) ─────────────────────────────────────────────
 def _batch_emotion_evaluations(
     db_path: str | Path,
 ) -> dict[str, Any]:
-    """Return only profiles published by the 80/100 cohort release gate."""
+    """Return a full value score for every catalog skin.
+
+    Active-run aspect observations are used when present. Publication,
+    calibration, audit, and reviewer status do not participate in scoring.
+    """
     if not Path(db_path).exists():
         return {}
-    profiles = EmotionEvidenceRepository(db_path).list_latest_published_profiles()
-    if not profiles:
-        return {}
-
     repo = SkinRepository(db_path)
     builder = FeatureBuilder(repo)
     engine = RuleEngine()
-    validated: dict[str, Any] = {}
-    for key, profile in profiles.items():
+    profiles = EmotionEvidenceRepository(db_path).list_active_run_profiles()
+    signal_repo = MarketSignalRepository(db_path)
+    truth_scores = _batch_final_truth_scores()
+    model_scores = _batch_model_comment_scores(db_path)
+    scored: dict[str, Any] = {}
+    for skin in repo.list_skins(limit=None):
+        key = str(skin["source_key"])
+        profile = profiles.get(key)
         try:
-            signals = MarketValidationSignals.from_dict(
-                signal_values_from_profile(profile)
-            )
+            truth = _final_truth_for_skin(skin, truth_scores)
+            model = _final_truth_for_skin(skin, model_scores)
+            if truth and truth.get("observed_emotion_score") is not None:
+                signals = _signals_from_aspect_scores(truth.get("aspect_scores") or {})
+            elif model and model.get("observed_emotion_score") is not None:
+                signals = _signals_from_aspect_scores(model.get("aspect_scores") or {})
+            elif profile is not None:
+                signals = MarketValidationSignals.from_dict(
+                    signal_values_from_profile(profile)
+                )
+            else:
+                signals = signal_repo.get_opinion_signals(key)
             features = builder.build(key, signals)
             result = engine.evaluate(features, profile)
         except Exception:
             continue
-        if result.validation_status == "evidence_validated":
-            validated[key] = result
-    return validated
+        if result.evaluation_score is not None:
+            scored[key] = result
+    return scored
+
+
+def _signals_from_aspect_scores(
+    aspects: dict[str, Any],
+) -> MarketValidationSignals:
+    """Translate stored aspect names into RuleEngine signal fields."""
+    return MarketValidationSignals.from_dict(
+        {
+            "visual_score": aspects.get("visual_appeal"),
+            "feel_score": aspects.get("in_game_feel"),
+            "craftsmanship_score": aspects.get("craftsmanship_quality"),
+            "collection_score": aspects.get("collection_value"),
+            "value_score": aspects.get("value_for_money"),
+            "purchase_intent_score": aspects.get("purchase_intent"),
+        }
+    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -430,10 +461,7 @@ def get_portfolio_rows(
     cash_by_key = _batch_cash(
         db_path, period_start=period_start, period_end=period_end
     )
-    validated = _batch_emotion_evaluations(db_path)
-    final_truth_scores = _batch_final_truth_scores()
-    model_comment_scores = _batch_model_comment_scores(db_path)
-    diagnostics = EmotionEvidenceRepository(db_path).list_active_run_profiles()
+    scored_values = _batch_emotion_evaluations(db_path)
 
     rows: list[PortfolioSkinRow] = []
     for skin in skins:
@@ -446,72 +474,33 @@ def get_portfolio_rows(
         if online_to and (online_d is None or online_d > online_to):
             continue
 
-        evaluation = validated.get(source_key)
-        final_truth = _final_truth_for_skin(skin, final_truth_scores)
-        has_declared_truth = bool(
-            final_truth
-            and final_truth.get("score_status") != "no_final_truth_rows"
+        evaluation = scored_values.get(source_key)
+        emotion_score = evaluation.evaluation_score if evaluation is not None else None
+        emotion_source = (
+            EmotionScoreSource.VALUE_PRESENT.value if emotion_score is not None else None
         )
-        model_comment = (
-            None
-            if has_declared_truth
-            else _final_truth_for_skin(skin, model_comment_scores)
+        emotion_score_status = (
+            str((evaluation.evidence or {}).get("score_status") or "") or None
+            if evaluation is not None
+            else None
         )
-        diagnostic = diagnostics.get(source_key)
-        # Declared human truth governs every reviewed skin, including an
-        # explicit no-relevant result. The selected comment scorer covers other
-        # fully annotated sources; a published profile is the final fallback.
-        if has_declared_truth:
-            final_truth_score = final_truth.get("observed_emotion_score")
-            truth_aspects = final_truth.get("aspect_scores") or {}
-            emotion_score = (
-                int(final_truth_score) if final_truth_score is not None else None
+        aspects = evaluation.aspect_scores if evaluation is not None else {}
+        perceived_value = aspects.get("value_for_money")
+        qualified_aspect_count = sum(
+            aspects.get(aspect) is not None
+            for aspect in (
+                "visual_appeal",
+                "in_game_feel",
+                "craftsmanship_quality",
+                "collection_value",
+                "value_for_money",
+                "purchase_intent",
             )
-            emotion_source = (
-                EmotionScoreSource.HUMAN_FINAL_TRUTH.value
-                if emotion_score is not None
-                else None
-            )
-            emotion_score_status = str(final_truth.get("score_status") or "") or None
-            perceived_value = truth_aspects.get("value_for_money")
-            qualified_aspect_count = sum(
-                value is not None for value in truth_aspects.values()
-            )
-            emotion_run_id = DEFAULT_EMOTION_RUN_ID
-        elif model_comment is not None:
-            model_score = model_comment.get("observed_emotion_score")
-            model_aspects = model_comment.get("aspect_scores") or {}
-            emotion_score = int(model_score) if model_score is not None else None
-            emotion_source = (
-                EmotionScoreSource.SELECTED_COMMENT_MODEL.value
-                if emotion_score is not None
-                else None
-            )
-            emotion_score_status = (
-                str(model_comment.get("score_status") or "") or None
-            )
-            perceived_value = model_aspects.get("value_for_money")
-            qualified_aspect_count = sum(
-                value is not None for value in model_aspects.values()
-            )
-            emotion_run_id = str(model_comment.get("run_id") or "") or None
-        elif evaluation is not None:
-            emotion_score = evaluation.evaluation_score
-            emotion_source = EmotionScoreSource.PUBLISHED_RULE_ENGINE.value
-            emotion_score_status = "published_qualified"
-            perceived_value = (evaluation.aspect_scores or {}).get("value_for_money")
-            qualified_aspect_count = diagnostic.qualified_aspect_count if diagnostic else 0
-            emotion_run_id = evaluation.evidence_run_id
-        else:
-            emotion_score = None
-            emotion_source = None
-            emotion_score_status = None
-            perceived_value = None
-            qualified_aspect_count = diagnostic.qualified_aspect_count if diagnostic else 0
-            emotion_run_id = None
-        is_validated = emotion_score is not None
+        )
+        emotion_run_id = evaluation.evidence_run_id if evaluation is not None else None
+        is_scored = emotion_score is not None
         emotion_status = (
-            EmotionStatus.VALIDATED.value if is_validated else EmotionStatus.MISSING.value
+            EmotionStatus.SCORED.value if is_scored else EmotionStatus.MISSING.value
         )
 
         cash = cash_by_key.get(source_key) or {}
@@ -534,7 +523,7 @@ def get_portfolio_rows(
                 online_date=online_text,
                 primary_asset_url=skin.get("primary_asset_url"),
                 emotion_score=emotion_score,
-                emotion_validated=is_validated,
+                emotion_scored=is_scored,
                 emotion_score_source=emotion_source,
                 emotion_score_status=emotion_score_status,
                 perceived_value=perceived_value,
@@ -543,22 +532,14 @@ def get_portfolio_rows(
                 emotion_ci_low=(
                     (evaluation.score_ci or {}).get("low")
                     if evaluation is not None
-                    and emotion_source == EmotionScoreSource.PUBLISHED_RULE_ENGINE.value
                     else None
                 ),
                 emotion_ci_high=(
                     (evaluation.score_ci or {}).get("high")
                     if evaluation is not None
-                    and emotion_source == EmotionScoreSource.PUBLISHED_RULE_ENGINE.value
                     else None
                 ),
-                emotion_failure_reasons=(
-                    [emotion_score_status]
-                    if emotion_score is None and emotion_score_status
-                    else list(diagnostic.validation_reasons)
-                    if diagnostic and emotion_score is None
-                    else []
-                ),
+                emotion_failure_reasons=[],
                 emotion_qualified_aspect_count=qualified_aspect_count,
                 cash_attributed_revenue=cash_revenue_cny,
                 cash_sales_volume=cash.get("sales_volume"),
@@ -572,8 +553,8 @@ def get_portfolio_rows(
         )
 
     # Apply coverage filters.
-    if emotion_coverage == "validated":
-        rows = [r for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value]
+    if emotion_coverage == "scored":
+        rows = [r for r in rows if r.emotion_status == EmotionStatus.SCORED.value]
     elif emotion_coverage == "missing":
         rows = [r for r in rows if r.emotion_status == EmotionStatus.MISSING.value]
     if cash_coverage == "has_record":
@@ -586,7 +567,7 @@ def get_portfolio_rows(
 
 def _completeness(cash_status: str, emotion_status: str) -> str:
     has_cash = cash_status == CashStatus.HAS_RECORD.value
-    has_emotion = emotion_status == EmotionStatus.VALIDATED.value
+    has_emotion = emotion_status == EmotionStatus.SCORED.value
     if has_cash and has_emotion:
         return Completeness.COMPLETE.value
     if has_cash or has_emotion:
@@ -600,7 +581,7 @@ def get_portfolio_summary(
     db_path: str | Path | None = None,
 ) -> PortfolioSummary:
     total = len(rows)
-    validated = sum(1 for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value)
+    scored_count = sum(1 for r in rows if r.emotion_status == EmotionStatus.SCORED.value)
     cash = sum(1 for r in rows if r.cash_status == CashStatus.HAS_RECORD.value)
     portfolio_revenue = sum(
         (r.cash_attributed_revenue or 0.0)
@@ -614,45 +595,34 @@ def get_portfolio_summary(
         else None
     ) or {}
     catalog_size = total
-    catalog_validated = validated
+    catalog_scored = scored_count
+    cohort_scored = 0
     if db_path is not None:
         try:
             catalog = SkinRepository(db_path).list_skins(limit=None)
             catalog_size = len(catalog)
-            published = _batch_emotion_evaluations(db_path)
-            truth_scores = _batch_final_truth_scores()
-            model_scores = _batch_model_comment_scores(db_path)
-            available_keys = set()
-            for skin in catalog:
-                truth_score = _final_truth_for_skin(skin, truth_scores)
-                has_declared_truth = bool(
-                    truth_score
-                    and truth_score.get("score_status") != "no_final_truth_rows"
+            scored = _batch_emotion_evaluations(db_path)
+            catalog_scored = sum(
+                getattr(result, "evaluation_score", None) is not None
+                for result in scored.values()
+            )
+            if cohort.get("run_id"):
+                members = EmotionEvidenceRepository(db_path).list_cohort_members(
+                    str(cohort["run_id"])
                 )
-                model_score = (
-                    None
-                    if has_declared_truth
-                    else _final_truth_for_skin(skin, model_scores)
+                cohort_scored = sum(
+                    str(member["source_key"]) in scored for member in members
                 )
-                source_key = str(skin["source_key"])
-                if has_declared_truth:
-                    score = truth_score.get("observed_emotion_score")
-                elif model_score is not None:
-                    score = model_score.get("observed_emotion_score")
-                else:
-                    score = getattr(published.get(source_key), "evaluation_score", None)
-                if score is not None:
-                    available_keys.add(source_key)
-            catalog_validated = len(available_keys)
         except Exception:
             catalog_size = 0
-            catalog_validated = 0
+            catalog_scored = 0
+            cohort_scored = 0
     return PortfolioSummary(
         total_skins=total,
         catalog_size=catalog_size,
-        catalog_validated_emotion_count=catalog_validated,
-        validated_emotion_count=validated,
-        validated_emotion_rate=round(validated / total, 4) if total else 0.0,
+        catalog_scored_count=catalog_scored,
+        scored_count=scored_count,
+        scored_rate=round(scored_count / total, 4) if total else 0.0,
         cash_count=cash,
         cash_rate=round(cash / total, 4) if total else 0.0,
         portfolio_attributed_revenue_cny=round(portfolio_revenue, 2),
@@ -660,7 +630,7 @@ def get_portfolio_summary(
         coverage_gaps=get_coverage_gaps(rows),
         emotion_cohort_run_id=cohort.get("run_id"),
         emotion_cohort_size=int(cohort.get("cohort_size") or 100),
-        emotion_cohort_validated_count=int(cohort.get("validated_count") or 0),
+        emotion_cohort_scored_count=cohort_scored,
         emotion_cohort_release_status=str(cohort.get("release_status") or "unavailable"),
         emotion_observation_start=cohort.get("observation_start"),
         emotion_observation_end=cohort.get("observation_end"),
@@ -739,7 +709,7 @@ def get_release_revenue_timeline(
     return releases, revenue
 
 
-# ── Single-skin detail (gated emotion + separate cash) ───────────────────
+# ── Single-skin detail (full value score + separate cash) ────────────────
 def get_skin_detail(
     db_path: str | Path,
     source_key: str,
@@ -757,8 +727,8 @@ def get_skin_detail(
     if skin is None:
         return None
 
-    # Emotion: human final truth takes precedence over the selected comment
-    # scorer, then a published qualified profile. Diagnostics never fill blank.
+    # The primary result always uses the value-present scorer. Human and model
+    # artifacts remain attached as provenance but never gate or suppress it.
     evaluation: dict[str, Any] | None = None
     final_truth_score = _final_truth_for_skin(skin, _batch_final_truth_scores())
     has_declared_truth = bool(
@@ -774,15 +744,25 @@ def get_skin_detail(
     signal_repo = MarketSignalRepository(db_path)
     try:
         evidence_repo = EmotionEvidenceRepository(db_path)
-        profile = evidence_repo.latest_published_profile(source_key)
-        diagnostic_profile = profile or evidence_repo.latest_run_profile(source_key)
-        signals = MarketValidationSignals.from_dict(
-            signal_values_from_profile(diagnostic_profile) if diagnostic_profile else {}
-        )
+        diagnostic_profile = evidence_repo.latest_run_profile(source_key)
+        if final_truth_score and final_truth_score.get("observed_emotion_score") is not None:
+            signals = _signals_from_aspect_scores(
+                final_truth_score.get("aspect_scores") or {}
+            )
+        elif model_comment_score and model_comment_score.get("observed_emotion_score") is not None:
+            signals = _signals_from_aspect_scores(
+                model_comment_score.get("aspect_scores") or {}
+            )
+        elif diagnostic_profile:
+            signals = MarketValidationSignals.from_dict(
+                signal_values_from_profile(diagnostic_profile)
+            )
+        else:
+            signals = signal_repo.get_opinion_signals(source_key)
         features = FeatureBuilder(SkinRepository(db_path)).build(source_key, signals)
         result = RuleEngine().evaluate(features, diagnostic_profile)
         evaluation = result.to_dict()
-        if result.validation_status == "evidence_validated":
+        if result.evaluation_score is not None:
             aspect_scores = evaluation.get("aspect_scores", {})
     except Exception:
         evaluation = None
@@ -797,11 +777,7 @@ def get_skin_detail(
     try:
         cv = CashValueService(db_path).cash_value(
             source_key, start, end,
-            evaluation_score=(
-                (evaluation or {}).get("evaluation_score")
-                if (evaluation or {}).get("validation_status") == "evidence_validated"
-                else None
-            ),
+            evaluation_score=(evaluation or {}).get("evaluation_score"),
             legacy_signals=signal_repo.get_signals(source_key),
         )
         cash_value = cv

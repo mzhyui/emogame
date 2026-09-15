@@ -66,7 +66,7 @@ def get_cash_value(
     path, skin_repo = _context(source_key, db)
     market_repo = MarketSignalRepository(path)
     signals = market_repo.get_signals(source_key)
-    profile = EmotionEvidenceRepository(path).latest_published_profile(source_key)
+    profile = EmotionEvidenceRepository(path).latest_run_profile(source_key)
     emotion_signals = MarketValidationSignals.from_dict(
         signal_values_from_profile(profile) if profile else {}
     )

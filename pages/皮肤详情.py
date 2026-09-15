@@ -1,7 +1,7 @@
-"""皮肤详情页：单皮肤的情绪分析、感知价值与现金价值三块分析。
+"""皮肤详情页：完整价值评分、感知价值与现金价值三块分析。
 
-来源、计算口径、警告、证据明细和原始 JSON 默认折叠但可审计。人工最终真值分优先，
-已发布 RuleEngine 分作为回退；无任一可用来源时情绪分留空。
+来源、计算口径、警告、证据明细和原始 JSON 默认折叠。观察值覆盖对应目录估计，
+但发布、质量门和人工审核均不控制评分资格。
 """
 
 from __future__ import annotations
@@ -62,94 +62,31 @@ def main() -> None:
         st.image(image_source, width=220)
 
     evaluation = detail.evaluation or {}
-    validation_status = evaluation.get("validation_status", "insufficient_market_evidence")
-    published = validation_status == "evidence_validated"
-    truth = detail.final_truth_score or {}
-    has_declared_truth = bool(
-        truth and truth.get("score_status") != "no_final_truth_rows"
-    )
-    model_score_payload = detail.model_comment_score or {}
-    observed_payload = truth if has_declared_truth else model_score_payload
-    observed_score = observed_payload.get("observed_emotion_score")
-    has_truth_score = has_declared_truth and observed_score is not None
-    has_model_score = (
-        not has_declared_truth
-        and bool(model_score_payload)
-        and observed_score is not None
-    )
-    emotion_score = observed_score if observed_score is not None else (
-        evaluation.get("evaluation_score")
-        if published and not observed_payload
-        else None
-    )
-    emotion_source = (
-        "human_final_truth" if has_truth_score
-        else "selected_comment_model" if has_model_score
-        else "published_rule_engine" if published and not observed_payload
-        else None
-    )
-    displayed_aspects = (
-        observed_payload.get("aspect_scores") or {}
-        if observed_payload
-        else detail.aspect_scores
-    )
+    emotion_score = evaluation.get("evaluation_score")
+    emotion_source = "value_present" if emotion_score is not None else None
+    displayed_aspects = detail.aspect_scores or {}
+    scoring_evidence = evaluation.get("evidence") or {}
+    observed_aspects = scoring_evidence.get("observed_aspects") or []
+    estimated_aspects = scoring_evidence.get("estimated_aspects") or []
 
     # ── Block 1: Emotional analysis ───────────────────────────────────────────
     st.divider()
     st.subheader("情绪分析")
     if emotion_score is None:
-        if observed_payload:
-            st.warning("当前皮肤有评论，但评分来源未发现可用情绪维度，情绪分留空。")
-        else:
-            st.warning(
-                "当前皮肤没有可用评论来源或已发布模型分，"
-                "情绪分留空。"
-            )
-        reasons = evaluation.get("validation_reasons") or []
-        if reasons:
-            st.caption("模型评估未发布原因：" + "；".join(str(reason) for reason in reasons))
+        st.warning("当前皮肤无法生成价值评分。")
     ecols = st.columns(4)
     ecols[0].metric(
         "情绪分",
         display_number(emotion_score) if emotion_score is not None else "",
     )
     ecols[1].metric("情绪来源", emotion_source_label(emotion_source))
-    if has_truth_score:
-        ecols[2].metric("维度覆盖", display_percent(float(truth.get("aspect_coverage") or 0) * 100))
-        ecols[3].metric(
-            "相关/审核文本",
-            f"{truth.get('relevant_row_count', 0)}/{truth.get('review_row_count', 0)}",
-        )
+    ecols[2].metric("完整维度", "6/6" if emotion_score is not None else "")
+    ecols[3].metric("评分支持度", display_number(evaluation.get("confidence")))
+    if emotion_score is not None:
         st.caption(
-            "来源：development-v2.csv 人工最终真值。分数仅聚合已观察情绪维度；"
-            "缺失维度不补中性值。"
+            f"价值存在即评分：{len(observed_aspects)} 个观察维度，"
+            f"{len(estimated_aspects)} 个目录估计维度；不要求发布、质量门或人工审核。"
         )
-    elif has_model_score:
-        ecols[2].metric(
-            "维度覆盖",
-            display_percent(float(model_score_payload.get("aspect_coverage") or 0) * 100),
-        )
-        ecols[3].metric(
-            "相关/评论文本",
-            f"{model_score_payload.get('relevant_row_count', 0)}/"
-            f"{model_score_payload.get('comment_row_count', 0)}",
-        )
-        gate_note = (
-            "已通过质量门"
-            if model_score_payload.get("quality_gate_passed")
-            else "未通过发布质量门，按用户要求作探索显示"
-        )
-        st.caption(
-            f"来源：{model_score_payload.get('model_name', '未知模型')} 对可用评论的评分；"
-            f"{gate_note}。分数仅聚合已观察维度，缺失维度不补中性值。"
-        )
-    elif published and not observed_payload:
-        ecols[2].metric("证据覆盖", display_number(evaluation.get("evidence_coverage")))
-        ecols[3].metric("置信度", display_number(evaluation.get("confidence")))
-        st.caption("来源：已发布、来源合格的 RuleEngine 社区证据分。")
-    else:
-        ecols[2].metric("维度覆盖", "")
-        ecols[3].metric("相关/审核文本", "")
     charts.aspect_radar(displayed_aspects)
 
     # ── Block 2: Perceived value ──────────────────────────────────────────────

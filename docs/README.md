@@ -18,6 +18,10 @@
 | 09 | [部署与运维](09-deployment.md) | Docker 部署、GPU 需求、开发路线图 |
 | 10 | [Agent Lightning 本地 Agentic RL 教程](10-agent-lightning-local.md) | 已固定的上游子模块、单机验证和 GPU 训练边界 |
 | 11 | [Agentic RL 方法综述](11-agentic-rl-method-survey.md) · [PPT](11-agentic-rl-method-survey.pptx) | 10 篇相关工作、方法比较、Agent Lightning 定位与实验路线 |
+| 12 | [感知溢价试点](12-perceived-premium-pilot.md) | 50 皮肤冻结队列、VLM/社区融合、特征溯源和留出收入验证 |
+| 13 | [情绪证据协议](13-emotion-evidence-protocol.md) | 100 皮肤队列、标注、资格门槛、发布门槛和声明边界 |
+| 14 | [情绪证据操作手册](14-emotion-evidence-operations.md) | 采集、人工复核、最终真值和评分工件运行手册 |
+| 15 | [当前皮肤评分器](15-current-skin-scorer.md) | 当前经济/现金、感知溢价、情绪模型、实现、数据与结果 |
 
 ## 快速导航
 

@@ -73,7 +73,7 @@ def current_filters() -> DashboardFilters:
         v = st.session_state.get(key)
         return v if isinstance(v, date) else None
 
-    emotion_map = {"全部": "all", "有情绪分": "validated", "无情绪分": "missing"}
+    emotion_map = {"全部": "all", "有情绪分": "scored", "无情绪分": "missing"}
     cash_map = {"全部": "all", "有记录": "has_record", "缺少记录": "missing"}
 
     return DashboardFilters(

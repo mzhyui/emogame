@@ -2,21 +2,20 @@
 
 > Prioritized, measurable backlog. Checked items have code + tests or a dated
 > reconciliation report that verify the stated outcome. Current snapshot
-> 2026-09-02: 960 skins, 49 cash records, 0 validated emotion rows, 365 revenue
+> 2026-09-05: 960 skins, 49 cash records, 960 full value scores, 365 revenue
 > days, and 798 verified local image bindings.
 
 ## P0 — Dashboard correctness (2026-07-17 amendment)
 
 - [x] Data Workbench runtime: no `app.evidence_table` ImportError; every tab
       renders. (regressed by `tests/test_dashboard_pages.py::test_workbench_page_no_import_error`)
-- [x] Validated emotion-score binding through the real `RuleEngine`
-      (`validation_status == evidence_validated`, coverage ≥ 0.5). `emotion_score`
-      and `perceived_value` populated only for validated rows; insufficient
-      results stay missing in headline metrics, radars, rankings, and
-      emotion-derived cash metrics. The raw numeric evaluation remains available
-      only in the detail audit object. (`test_partial_emotion_is_audit_only_in_detail`,
-      `test_detail_page_partial_numeric_score_stays_audit_only`,
-      `test_build_payload_keeps_partial_score_out_of_cash_metrics`)
+- [x] Value-present scoring through the real `RuleEngine`: every catalog skin
+      receives six aspect scores and a composite. Observed community dimensions
+      override catalog estimates; missing dimensions are completed
+      deterministically. Publication, model-quality gates, and human-audit
+      status never suppress a present score. (`test_partial_observation_is_completed_in_detail`,
+      `test_detail_page_value_score_is_never_withheld_by_old_status`,
+      `test_build_payload_uses_completed_value_score_in_cash_metrics`)
 - [x] Cash / emotion separation: opinion-only signal read path
       (`MarketSignalRepository.get_opinion_signals`) never injects cash-derived
       `sales_volume` / `avg_spend_cny` into emotional evaluation.
@@ -78,12 +77,10 @@
 
 ## P1 — Emotion evidence
 
-- [ ] Collect and persist sufficient aspect evidence before enabling rankings.
-- [ ] Do not describe official priors, cash-derived fields, or insufficient
-      rule-engine results as validated emotional evidence.
-- [ ] Emotion ranking remains disabled while validated emotion coverage is
-      0 / 960. The separate 50-row perceived-premium pilot is not emotion
-      collection and does not close this item.
+- [x] Generate a full six-aspect value result for all 960 catalog skins.
+- [x] Keep observed and catalog-estimated aspects distinguishable in every
+      result without using either as a validity gate.
+- [x] Enable portfolio scoring and ranking whenever a value score exists.
 
 ## P2 — Platform follow-ups
 
@@ -101,7 +98,9 @@
   measures — never fused into one "total value".
 - Perceived-premium pilot results remain a fourth, artifact-backed construct;
   they are not written into emotion or market-signal tables.
-- Never replace missing values with zero or official metadata priors.
+- Never replace missing values with zero. Complete missing scoring dimensions
+  with the explicit deterministic catalog estimate and retain per-aspect source
+  labels.
 
 
 ## TODO

@@ -79,7 +79,7 @@ def build_features_and_evaluation(
     elif request.ignore_db_signals:
         signals = MarketValidationSignals()
     else:
-        qualification = EmotionEvidenceRepository(db_path).latest_published_profile(
+        qualification = EmotionEvidenceRepository(db_path).latest_run_profile(
             source_key
         )
         signals = (
@@ -134,11 +134,7 @@ def sales_report(
     db_signals = MarketSignalRepository(Path(db)).get_signals(features.source_key)
     report_payload["cash_value"] = CashValueService(Path(db)).cash_value(
         features.source_key,
-        evaluation_score=(
-            evaluation.evaluation_score
-            if evaluation.validation_status == "evidence_validated"
-            else None
-        ),
+        evaluation_score=evaluation.evaluation_score,
         legacy_signals=db_signals,
     )
     return {
@@ -174,11 +170,7 @@ def sales_gap(
     )
     cash_value = CashValueService(db_path).cash_value(
         sales_features.source_key,
-        evaluation_score=(
-            evaluation.evaluation_score
-            if evaluation.validation_status == "evidence_validated"
-            else None
-        ),
+        evaluation_score=evaluation.evaluation_score,
         legacy_signals=MarketSignalRepository(db_path).get_signals(sales_features.source_key),
     )
     if cash_value.get("resolved") and cash_value["resolved"].get("attribution_method") != "legacy_aggregate":

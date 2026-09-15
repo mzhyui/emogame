@@ -112,10 +112,11 @@ class ApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         evaluation = response.json()["evaluation"]
-        self.assertEqual(evaluation["validation_status"], "insufficient_market_evidence")
-        self.assertIn("missing_published_evidence_profile", evaluation["validation_reasons"])
+        self.assertEqual(evaluation["validation_status"], "value_scored")
+        self.assertEqual(evaluation["validation_reasons"], [])
+        self.assertEqual(evaluation["aspect_scores"]["visual_appeal"], 80)
 
-    def test_evaluate_reads_only_published_cohort_profile(self):
+    def test_evaluate_reads_latest_profile_without_publication(self):
         records = [
             {
                 "source_key": "107-08" if index == 0 else f"cohort-{index:03d}",
@@ -143,17 +144,6 @@ class ApiTest(unittest.TestCase):
             observation_end="2026-09-01",
             annotation_schema_version=1,
         )
-        repo.record_ethics_status("api-run", status="ready", record_hash="ethics")
-        repo.freeze_model_selection(
-            "api-run",
-            model_name="deterministic-v1",
-            model_digest="digest",
-            prompt_hash="prompt",
-            metrics={},
-        )
-        repo.set_review_gate("api-run", gate="calibration", passed=True, metrics={})
-        repo.set_review_gate("api-run", gate="audit", passed=True, metrics={})
-        repo.bind_validation_artifact("api-run", "artifact")
         for row in records[:80]:
             repo.save_validation_result(
                 EvidenceQualificationProfile(
@@ -174,8 +164,6 @@ class ApiTest(unittest.TestCase):
                     protocol_hash="p" * 64,
                 )
             )
-        repo.publish_run("api-run")
-
         response = self.client.post(
             "/api/evaluate",
             params={"db": str(self.db_path)},
@@ -183,7 +171,7 @@ class ApiTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         evaluation = response.json()["evaluation"]
-        self.assertEqual(evaluation["validation_status"], "evidence_validated")
+        self.assertEqual(evaluation["validation_status"], "value_scored")
         self.assertEqual(evaluation["evaluation_score"], 75)
         self.assertEqual(evaluation["evidence_run_id"], "api-run")
 
@@ -195,7 +183,7 @@ class ApiTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["sales_report"]["decision"], "collect_more_evidence")
+        self.assertNotEqual(response.json()["sales_report"]["decision"], "collect_more_evidence")
 
     def test_sales_gap(self):
         market_repo = MarketSignalRepository(self.db_path)

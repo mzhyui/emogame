@@ -20,7 +20,7 @@ from dashboard.format import (
 def status_chip(label: str, kind: str = "neutral") -> str:
     """Return an HTML chip string for a small status label."""
     colors = {
-        "validated": ("#065f46", "#d1fae5"),
+        "scored": ("#065f46", "#d1fae5"),
         "missing": ("#92400e", "#fef3c7"),
         "has_record": ("#1e40af", "#dbeafe"),
         "risk": ("#b45309", "#fef3c7"),
@@ -65,7 +65,7 @@ def data_completeness(completeness: str) -> str:
 
 
 def emotion_chip(status: str) -> str:
-    kind = "validated" if status == "validated" else "missing"
+    kind = "scored" if status == "scored" else "missing"
     return status_chip(emotion_status_label(status), kind)
 
 

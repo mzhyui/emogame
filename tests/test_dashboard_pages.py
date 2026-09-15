@@ -52,9 +52,8 @@ class DashboardPageRenderTests(unittest.TestCase):
         at = AppTest.from_file("pages/皮肤详情.py").run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
 
-    def test_detail_page_insufficient_withholds_headline_score(self):
-        """With no market signals, the detail page must warn that the emotion
-        score is withheld rather than presenting a comprehensive score."""
+    def test_detail_page_catalog_skin_has_full_score(self):
+        """A catalog skin renders a full score without market-gate suppression."""
         # Pick any real skin from the DB.
         from data.skin_repository import SkinRepository
 
@@ -65,23 +64,36 @@ class DashboardPageRenderTests(unittest.TestCase):
         at.session_state["dash_selected_source_key"] = skins[0]["source_key"]
         at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
-        warnings = " ".join(w.value for w in at.warning)
-        self.assertIn("情绪分留空", warnings)
+        metrics = {metric.label: metric.value for metric in at.metric}
+        self.assertNotEqual(metrics["情绪分"], "")
+        self.assertEqual(metrics["完整维度"], "6/6")
 
-    def test_detail_page_partial_numeric_score_stays_audit_only(self):
-        """A numeric but insufficient result must render as N/A publicly."""
+    def test_detail_page_value_score_is_never_withheld_by_old_status(self):
+        """A present full value score renders without publication state."""
+        aspects = {
+            "visual_appeal": 80,
+            "in_game_feel": 72,
+            "craftsmanship_quality": 75,
+            "collection_value": 68,
+            "value_for_money": 70,
+            "purchase_intent": 74,
+        }
         detail = SkinDashboardDetail(
             source_key="partial",
             skin={"hero_name": "测试英雄", "skin_name": "部分证据"},
             evaluation={
                 "evaluation_score": 80,
-                "validation_status": "insufficient_market_evidence",
+                "validation_status": "value_scored",
                 "evidence_coverage": 0.31,
                 "confidence": 0.52,
                 "official_prior_score": 25,
-                "aspect_scores": {"visual_appeal": 80},
+                "aspect_scores": aspects,
+                "evidence": {
+                    "observed_aspects": ["visual_appeal"],
+                    "estimated_aspects": [name for name in aspects if name != "visual_appeal"],
+                },
             },
-            aspect_scores={},
+            aspect_scores=aspects,
             cash_value={},
             sales_gap={},
             sales_report={},
@@ -93,20 +105,31 @@ class DashboardPageRenderTests(unittest.TestCase):
             at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
-        self.assertEqual(metrics["情绪分"], "")
-        self.assertEqual(metrics["维度覆盖"], "")
-        self.assertEqual(metrics["相关/审核文本"], "")
-        self.assertEqual(metrics["性价比 (value_for_money)"], "N/A")
-        self.assertFalse(at.get("plotly_chart"))
+        self.assertEqual(metrics["情绪分"], "80")
+        self.assertEqual(metrics["完整维度"], "6/6")
+        self.assertEqual(metrics["性价比 (value_for_money)"], "70")
 
-    def test_detail_page_prefers_human_final_truth_score(self):
+    def test_detail_page_human_artifact_does_not_gate_full_score(self):
+        aspects = {
+            "visual_appeal": 77,
+            "in_game_feel": 70,
+            "craftsmanship_quality": 68,
+            "collection_value": 65,
+            "value_for_money": 66,
+            "purchase_intent": 69,
+        }
         detail = SkinDashboardDetail(
             source_key="truth",
             skin={"hero_name": "测试英雄", "skin_name": "最终真值"},
             evaluation={
-                "evaluation_score": None,
-                "validation_status": "insufficient_market_evidence",
+                "evaluation_score": 70,
+                "validation_status": "value_scored",
                 "official_prior_score": 25,
+                "confidence": 0.6,
+                "evidence": {
+                    "observed_aspects": ["visual_appeal"],
+                    "estimated_aspects": [name for name in aspects if name != "visual_appeal"],
+                },
             },
             final_truth_score={
                 "observed_emotion_score": 77,
@@ -116,7 +139,7 @@ class DashboardPageRenderTests(unittest.TestCase):
                 "review_row_count": 16,
                 "relevant_row_count": 13,
             },
-            aspect_scores={},
+            aspect_scores=aspects,
             cash_value={},
             sales_gap={},
             sales_report={},
@@ -128,18 +151,30 @@ class DashboardPageRenderTests(unittest.TestCase):
             at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
-        self.assertEqual(metrics["情绪分"], "77")
-        self.assertEqual(metrics["情绪来源"], "人工最终真值")
-        self.assertEqual(metrics["维度覆盖"], "16.67%")
-        self.assertEqual(metrics["相关/审核文本"], "13/16")
+        self.assertEqual(metrics["情绪分"], "70")
+        self.assertEqual(metrics["情绪来源"], "完整价值评分")
+        self.assertEqual(metrics["完整维度"], "6/6")
 
-    def test_detail_page_shows_selected_comment_model_score(self):
+    def test_detail_page_model_artifact_does_not_gate_full_score(self):
+        aspects = {
+            "visual_appeal": 64,
+            "in_game_feel": 68,
+            "craftsmanship_quality": 62,
+            "collection_value": 60,
+            "value_for_money": 63,
+            "purchase_intent": 65,
+        }
         detail = SkinDashboardDetail(
             source_key="comments",
             skin={"hero_name": "测试英雄", "skin_name": "评论评分"},
             evaluation={
-                "evaluation_score": None,
-                "validation_status": "insufficient_market_evidence",
+                "evaluation_score": 64,
+                "validation_status": "value_scored",
+                "confidence": 0.55,
+                "evidence": {
+                    "observed_aspects": ["in_game_feel"],
+                    "estimated_aspects": [name for name in aspects if name != "in_game_feel"],
+                },
             },
             final_truth_score=None,
             model_comment_score={
@@ -152,7 +187,7 @@ class DashboardPageRenderTests(unittest.TestCase):
                 "model_name": "qwen-test",
                 "quality_gate_passed": False,
             },
-            aspect_scores={},
+            aspect_scores=aspects,
             cash_value={},
             sales_gap={},
             sales_report={},
@@ -164,12 +199,11 @@ class DashboardPageRenderTests(unittest.TestCase):
             at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
-        self.assertEqual(metrics["情绪分"], "68")
-        self.assertEqual(metrics["情绪来源"], "评论模型评分")
-        self.assertEqual(metrics["维度覆盖"], "16.67%")
-        self.assertEqual(metrics["相关/评论文本"], "7/20")
+        self.assertEqual(metrics["情绪分"], "64")
+        self.assertEqual(metrics["情绪来源"], "完整价值评分")
+        self.assertEqual(metrics["完整维度"], "6/6")
         captions = " ".join(item.value for item in at.caption)
-        self.assertIn("未通过发布质量门", captions)
+        self.assertIn("不要求发布、质量门或人工审核", captions)
 
     def test_workbench_page_no_import_error(self):
         """Regresses defect #1: the workbench must not raise ImportError from a

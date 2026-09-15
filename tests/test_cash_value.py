@@ -43,7 +43,7 @@ class CashValueTests(unittest.TestCase):
             repo.get_record(1)
         self.assertFalse(ghost.exists())
 
-    def test_build_payload_keeps_partial_score_out_of_cash_metrics(self):
+    def test_build_payload_uses_completed_value_score_in_cash_metrics(self):
         self.add_skin("1-1", date(2026, 1, 1))
         CashValueRepository(self.db_path).save_manual_record(
             "1-1",
@@ -62,12 +62,10 @@ class CashValueTests(unittest.TestCase):
             MarketValidationSignals(visual_score=80),
         )
         evaluation = payload["evaluation"]
-        self.assertIsNone(evaluation["evaluation_score"])
-        self.assertEqual(
-            evaluation["validation_status"], "insufficient_market_evidence"
-        )
-        self.assertEqual(score_text(evaluation), "N/A")
-        self.assertIsNone(
+        self.assertIsNotNone(evaluation["evaluation_score"])
+        self.assertEqual(evaluation["validation_status"], "value_scored")
+        self.assertEqual(score_text(evaluation), str(evaluation["evaluation_score"]))
+        self.assertIsNotNone(
             payload["sales_report"]["cash_value"]["metrics"][
                 "emotional_value_efficiency_per_cny100"
             ]

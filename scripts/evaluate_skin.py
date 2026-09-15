@@ -107,7 +107,7 @@ def main() -> int:
         else:
             qualification = EmotionEvidenceRepository(
                 args.db
-            ).latest_published_profile(source_key)
+            ).latest_run_profile(source_key)
             signals = (
                 MarketValidationSignals.from_dict(
                     signal_values_from_profile(qualification)

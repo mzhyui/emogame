@@ -40,7 +40,7 @@ class SalesActionReport:
 
 
 class SalesAdvisor:
-    """Convert evidence-first evaluation output into sales actions."""
+    """Convert a complete value evaluation into sales actions."""
 
     def advise(self, features: SkinFeatureVector, evaluation: EvaluationResult) -> SalesActionReport:
         readiness = self._sales_readiness(features, evaluation)
@@ -83,7 +83,7 @@ class SalesAdvisor:
         readiness: int,
     ) -> tuple[str, str]:
         s = f.market_signals
-        if e.validation_status != "evidence_validated":
+        if e.evaluation_score is None:
             return (
                 "collect_more_evidence",
                 "外部舆论、购买意愿或传播证据不足，不能作为放量销售依据。",
@@ -151,7 +151,7 @@ class SalesAdvisor:
         gaps: list[str],
     ) -> list[dict[str, str]]:
         actions: list[dict[str, str]] = []
-        if e.validation_status != "evidence_validated":
+        if e.evaluation_score is None:
             actions.append(action("补证据", "先采集 B站搜索、微博评论、销量/拥有率，再输出销售判断。"))
         if any("价格" in item or "性价比" in item for item in blockers):
             actions.append(action("处理价格阻力", "测试首周折扣、礼包绑定或福利返利文案，降低用户的贵感。"))
@@ -171,7 +171,7 @@ class SalesAdvisor:
         s = f.market_signals
         posture = "hold"
         rationale = "证据不足以建议改变官方价格。"
-        if e.validation_status != "evidence_validated":
+        if e.evaluation_score is None:
             posture = "do_not_change_price"
             rationale = "缺少市场验证，先不要用当前评分做定价决策。"
         elif s.value_score is not None and normalized(s.value_score) < 0.45:

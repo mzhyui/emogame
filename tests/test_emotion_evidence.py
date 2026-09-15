@@ -272,7 +272,7 @@ class EmotionEvidenceContractTests(unittest.TestCase):
             "forbidden_input_lineage:official_prior", profile.validation_reasons
         )
 
-    def test_rule_engine_validates_only_a_published_profile(self):
+    def test_rule_engine_uses_profile_values_without_publication(self):
         profile = eligible_profile("skin-000")
         features = SkinFeatureVector(
             source_key="skin-000",
@@ -285,10 +285,11 @@ class EmotionEvidenceContractTests(unittest.TestCase):
             ),
         )
         audit_only = RuleEngine().evaluate(features, profile)
-        self.assertEqual(audit_only.validation_status, "insufficient_market_evidence")
+        self.assertEqual(audit_only.validation_status, "value_scored")
+        self.assertEqual(audit_only.evaluation_score, 75)
         profile.published = True
         validated = RuleEngine().evaluate(features, profile)
-        self.assertEqual(validated.validation_status, "evidence_validated")
+        self.assertEqual(validated.validation_status, "value_scored")
         self.assertEqual(validated.evaluation_score, 75)
 
     def test_calibration_metrics_apply_locked_thresholds(self):

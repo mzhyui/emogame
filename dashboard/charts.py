@@ -88,9 +88,9 @@ def release_revenue_timeline(releases: list[dict[str, Any]], revenue: list[dict[
 
 
 def emotion_vs_cash_scatter(rows: list[PortfolioSkinRow]) -> None:
-    """Scatter of source-backed emotional score vs attributed cash revenue."""
-    validated = [r for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value]
-    if not validated:
+    """Scatter of full operational value score vs attributed cash revenue."""
+    scored = [r for r in rows if r.emotion_status == EmotionStatus.SCORED.value]
+    if not scored:
         render_empty_state(
             "暂无具有可用情绪来源的皮肤，无法绘制情绪分 × 现金价值散点图。",
         )
@@ -101,21 +101,21 @@ def emotion_vs_cash_scatter(rows: list[PortfolioSkinRow]) -> None:
             "估算归因收入": r.cash_attributed_revenue or 0.0,
             "皮肤": f"{r.hero_name}/{r.skin_name}",
         }
-        for r in validated
+        for r in scored
     ])
     st.scatter_chart(df, x="情绪分", y="估算归因收入", height=320)
 
 
-def top_validated_ranking(rows: list[PortfolioSkinRow], by: str = "emotion") -> None:
-    """Leaderboard containing only skins with an explicit emotion source."""
-    validated = [r for r in rows if r.emotion_status == EmotionStatus.VALIDATED.value]
-    if not validated:
+def top_value_ranking(rows: list[PortfolioSkinRow], by: str = "emotion") -> None:
+    """Leaderboard containing every skin with a value-present score."""
+    scored = [r for r in rows if r.emotion_status == EmotionStatus.SCORED.value]
+    if not scored:
         render_empty_state(
-            "当前没有人工最终真值分或已发布模型分，排行留空。",
+            "当前没有可用价值分，排行留空。",
         )
         return
     key = "emotion_score" if by == "emotion" else "cash_attributed_revenue"
-    ranked = sort_missing_last(validated, key, reverse=True)
+    ranked = sort_missing_last(scored, key, reverse=True)
     df = pd.DataFrame([
         {"排名": i + 1, "皮肤": f"{r.hero_name}/{r.skin_name}",
          "情绪分": r.emotion_score,

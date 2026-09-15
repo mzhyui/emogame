@@ -15,11 +15,12 @@ from typing import Any, Literal
 
 
 class EmotionStatus(str, Enum):
-    VALIDATED = "validated"
+    SCORED = "scored"
     MISSING = "missing"
 
 
 class EmotionScoreSource(str, Enum):
+    VALUE_PRESENT = "value_present"
     HUMAN_FINAL_TRUTH = "human_final_truth"
     SELECTED_COMMENT_MODEL = "selected_comment_model"
     PUBLISHED_RULE_ENGINE = "published_rule_engine"
@@ -44,7 +45,7 @@ class DashboardFilters:
     quality: str | None = None
     online_from: date | None = None
     online_to: date | None = None
-    emotion_coverage: Literal["all", "validated", "missing"] = "all"
+    emotion_coverage: Literal["all", "scored", "missing"] = "all"
     cash_coverage: Literal["all", "has_record", "missing"] = "all"
     period_start: date | None = None
     period_end: date | None = None
@@ -75,10 +76,10 @@ class PortfolioSkinRow:
     online_date: str | None
     primary_asset_url: str | None = None
 
-    # Emotional evaluation -- declared human truth takes precedence over a
-    # published RuleEngine result. Missing sources remain ``None``.
+    # Operational full value score. Observed values are used when available
+    # and catalog estimates complete every missing aspect.
     emotion_score: int | None = None
-    emotion_validated: bool = False
+    emotion_scored: bool = False
     emotion_score_source: str | None = None
     emotion_score_status: str | None = None
     perceived_value: int | None = None  # aspect_scores["value_for_money"]
@@ -104,7 +105,7 @@ class PortfolioSkinRow:
         return self.cash_status == CashStatus.HAS_RECORD.value
 
     def has_emotion(self) -> bool:
-        return self.emotion_status == EmotionStatus.VALIDATED.value
+        return self.emotion_status == EmotionStatus.SCORED.value
 
 
 @dataclass
@@ -129,9 +130,9 @@ class PortfolioSummary:
 
     total_skins: int = 0
     catalog_size: int = 0
-    catalog_validated_emotion_count: int = 0
-    validated_emotion_count: int = 0
-    validated_emotion_rate: float = 0.0
+    catalog_scored_count: int = 0
+    scored_count: int = 0
+    scored_rate: float = 0.0
     cash_count: int = 0
     cash_rate: float = 0.0
     portfolio_attributed_revenue_cny: float = 0.0
@@ -139,7 +140,7 @@ class PortfolioSummary:
     coverage_gaps: dict[str, int] = field(default_factory=dict)
     emotion_cohort_run_id: str | None = None
     emotion_cohort_size: int = 100
-    emotion_cohort_validated_count: int = 0
+    emotion_cohort_scored_count: int = 0
     emotion_cohort_release_status: str = "unavailable"
     emotion_observation_start: str | None = None
     emotion_observation_end: str | None = None
@@ -148,9 +149,9 @@ class PortfolioSummary:
         return {
             "total_skins": self.total_skins,
             "catalog_size": self.catalog_size,
-            "catalog_validated_emotion_count": self.catalog_validated_emotion_count,
-            "validated_emotion_count": self.validated_emotion_count,
-            "validated_emotion_rate": self.validated_emotion_rate,
+            "catalog_scored_count": self.catalog_scored_count,
+            "scored_count": self.scored_count,
+            "scored_rate": self.scored_rate,
             "cash_count": self.cash_count,
             "cash_rate": self.cash_rate,
             "portfolio_attributed_revenue_cny": self.portfolio_attributed_revenue_cny,
@@ -158,7 +159,7 @@ class PortfolioSummary:
             "coverage_gaps": self.coverage_gaps,
             "emotion_cohort_run_id": self.emotion_cohort_run_id,
             "emotion_cohort_size": self.emotion_cohort_size,
-            "emotion_cohort_validated_count": self.emotion_cohort_validated_count,
+            "emotion_cohort_scored_count": self.emotion_cohort_scored_count,
             "emotion_cohort_release_status": self.emotion_cohort_release_status,
             "emotion_observation_start": self.emotion_observation_start,
             "emotion_observation_end": self.emotion_observation_end,

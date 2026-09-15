@@ -18,10 +18,11 @@ ATTRIBUTION_METHOD_LABELS: dict[str, str] = {
 
 # ── Value-status labels (emotional / cash) ─────────────────────────────────
 EMOTION_STATUS_LABELS: dict[str, str] = {
-    "validated": "有来源",
+    "scored": "已评分",
     "missing": "无来源",
 }
 EMOTION_SOURCE_LABELS: dict[str, str] = {
+    "value_present": "完整价值评分",
     "human_final_truth": "人工最终真值",
     "selected_comment_model": "评论模型评分",
     "published_rule_engine": "已发布模型评分",

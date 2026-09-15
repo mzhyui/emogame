@@ -68,7 +68,7 @@ def _private_raw_key(value: Any) -> str | None:
 
 
 class EmotionEvidenceRepository:
-    """Explicit writer and fail-closed reader for emotion evidence runs."""
+    """Explicit writer and provenance-preserving reader for emotion evidence."""
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH):
         self.db_path = Path(db_path)
@@ -1254,8 +1254,8 @@ class EmotionEvidenceRepository:
             return None
 
     def list_public_evidence(self, source_key: str) -> list[dict[str, Any]]:
-        """Return sanitized evidence only for a published qualifying profile."""
-        profile = self.latest_published_profile(source_key)
+        """Return sanitized exact-mapped evidence from the latest scored run."""
+        profile = self.latest_run_profile(source_key)
         if profile is None:
             return []
         try:

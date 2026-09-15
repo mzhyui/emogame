@@ -87,16 +87,20 @@ class EvaluationTest(unittest.TestCase):
         self.assertTrue(features.has_primary_asset)
         self.assertEqual(features.skin_age_days, 30)
 
-    def test_rule_engine_marks_missing_market_validation(self):
+    def test_rule_engine_scores_catalog_skin_without_market_validation(self):
         features = FeatureBuilder(self.repo, reference_date=date(2024, 7, 1)).build("105-01")
         result = RuleEngine().evaluate(features)
 
-        self.assertEqual(result.validation_status, "insufficient_market_evidence")
-        self.assertIn("insufficient_public_opinion_evidence", result.warnings)
-        self.assertIsNone(result.evaluation_score)
+        self.assertEqual(result.validation_status, "value_scored")
+        self.assertIn("catalog_estimated_aspects:", result.warnings[0])
+        self.assertIsNotNone(result.evaluation_score)
+        self.assertTrue(all(result.aspect_scores[name] is not None for name in (
+            "visual_appeal", "in_game_feel", "craftsmanship_quality",
+            "collection_value", "value_for_money", "purchase_intent",
+        )))
         self.assertGreater(result.official_prior_score, 0)
 
-    def test_market_signals_are_audit_only_without_published_profile(self):
+    def test_market_signals_override_catalog_estimates_without_publication(self):
         builder = FeatureBuilder(self.repo, reference_date=date(2024, 7, 1))
         baseline = RuleEngine().evaluate(builder.build("105-01"))
         features = builder.build(
@@ -119,11 +123,11 @@ class EvaluationTest(unittest.TestCase):
         )
         result = RuleEngine().evaluate(features)
 
-        self.assertEqual(result.validation_status, "insufficient_market_evidence")
-        self.assertEqual(result.confidence, baseline.confidence)
+        self.assertEqual(result.validation_status, "value_scored")
+        self.assertGreater(result.confidence, baseline.confidence)
         self.assertIsNotNone(result.evaluation_score)
-        self.assertGreater(result.aspect_scores["in_game_feel"], 0)
-        self.assertIn("missing_published_evidence_profile", result.validation_reasons)
+        self.assertEqual(result.aspect_scores["in_game_feel"], 82)
+        self.assertEqual(result.validation_reasons, [])
 
 
 if __name__ == "__main__":

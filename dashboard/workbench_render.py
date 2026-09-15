@@ -422,12 +422,7 @@ def render_cash_value_tab(db_path: Path, source_key: str, payload: dict[str, Any
         view_start, view_end = view_period
         cash = CashValueService(db_path).cash_value(
             source_key, view_start.isoformat(), view_end.isoformat(),
-            evaluation_score=(
-                payload["evaluation"].get("evaluation_score")
-                if payload["evaluation"].get("validation_status")
-                == "evidence_validated"
-                else None
-            ),
+            evaluation_score=payload["evaluation"].get("evaluation_score"),
             legacy_signals=MarketSignalRepository(db_path).get_signals(source_key),
         )
     else:
@@ -457,8 +452,7 @@ def render_evaluation_tab(payload: dict[str, Any]) -> None:
 
     evaluation = payload["evaluation"]
     report = payload["sales_report"]
-    validated = evaluation.get("validation_status") == "evidence_validated"
-    aspect_scores = evaluation["aspect_scores"] if validated else {}
+    aspect_scores = evaluation["aspect_scores"]
     if any(score is not None for score in aspect_scores.values()):
         chart_data = {
             "维度": [ASPECT_LABELS.get(name, name) for name in aspect_scores],
@@ -466,7 +460,7 @@ def render_evaluation_tab(payload: dict[str, Any]) -> None:
         }
         st.bar_chart(chart_data, x="维度", y="分数", height=260)
     else:
-        st.info("当前皮肤没有可审计的维度评分，系统只会显示官方先验和缺失证据。")
+        st.info("当前皮肤没有可用维度评分。")
 
     cols = st.columns(2)
     with cols[0]:
