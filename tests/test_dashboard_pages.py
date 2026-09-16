@@ -35,12 +35,12 @@ class DashboardPageRenderTests(unittest.TestCase):
         self.assertFalse(at.exception, f"overview raised: {at.exception}")
 
     def test_explorer_page_renders_without_exception(self):
-        at = AppTest.from_file("pages/皮肤探索.py").run(timeout=30)
+        at = AppTest.from_file("pages/skin_explorer.py").run(timeout=30)
         self.assertFalse(at.exception, f"explorer raised: {at.exception}")
 
     def test_explorer_zero_result_has_no_enabled_detail_button(self):
         """A search matching nothing must not render the fallback detail button."""
-        at = AppTest.from_file("pages/皮肤探索.py")
+        at = AppTest.from_file("pages/skin_explorer.py")
         at.session_state["dash_search"] = "___no_such_skin_xyz___"
         at.run(timeout=30)
         self.assertFalse(at.exception, f"explorer raised: {at.exception}")
@@ -49,7 +49,7 @@ class DashboardPageRenderTests(unittest.TestCase):
         self.assertNotIn("查看详情", labels)
 
     def test_detail_page_without_selection(self):
-        at = AppTest.from_file("pages/皮肤详情.py").run(timeout=30)
+        at = AppTest.from_file("pages/skin_detail.py").run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
 
     def test_detail_page_catalog_skin_has_full_score(self):
@@ -60,13 +60,13 @@ class DashboardPageRenderTests(unittest.TestCase):
         skins = SkinRepository(DEFAULT_DB_PATH).list_skins(limit=1)
         if not skins:
             self.skipTest("no skins in DB")
-        at = AppTest.from_file("pages/皮肤详情.py")
+        at = AppTest.from_file("pages/skin_detail.py")
         at.session_state["dash_selected_source_key"] = skins[0]["source_key"]
         at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
         self.assertNotEqual(metrics["情绪分"], "")
-        self.assertEqual(metrics["完整维度"], "6/6")
+        self.assertEqual(metrics["维度覆盖"], "6/6")
 
     def test_detail_page_value_score_is_never_withheld_by_old_status(self):
         """A present full value score renders without publication state."""
@@ -100,13 +100,13 @@ class DashboardPageRenderTests(unittest.TestCase):
             evidence_items=[],
         )
         with patch("dashboard.query.get_skin_detail", return_value=detail):
-            at = AppTest.from_file("pages/皮肤详情.py")
+            at = AppTest.from_file("pages/skin_detail.py")
             at.session_state["dash_selected_source_key"] = "partial"
             at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
         self.assertEqual(metrics["情绪分"], "80")
-        self.assertEqual(metrics["完整维度"], "6/6")
+        self.assertEqual(metrics["维度覆盖"], "6/6")
         self.assertEqual(metrics["性价比 (value_for_money)"], "70")
 
     def test_detail_page_human_artifact_does_not_gate_full_score(self):
@@ -146,14 +146,14 @@ class DashboardPageRenderTests(unittest.TestCase):
             evidence_items=[],
         )
         with patch("dashboard.query.get_skin_detail", return_value=detail):
-            at = AppTest.from_file("pages/皮肤详情.py")
+            at = AppTest.from_file("pages/skin_detail.py")
             at.session_state["dash_selected_source_key"] = "truth"
             at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
         self.assertEqual(metrics["情绪分"], "70")
-        self.assertEqual(metrics["情绪来源"], "完整价值评分")
-        self.assertEqual(metrics["完整维度"], "6/6")
+        self.assertEqual(metrics["情绪来源"], "综合价值评分")
+        self.assertEqual(metrics["维度覆盖"], "6/6")
 
     def test_detail_page_model_artifact_does_not_gate_full_score(self):
         aspects = {
@@ -194,21 +194,21 @@ class DashboardPageRenderTests(unittest.TestCase):
             evidence_items=[],
         )
         with patch("dashboard.query.get_skin_detail", return_value=detail):
-            at = AppTest.from_file("pages/皮肤详情.py")
+            at = AppTest.from_file("pages/skin_detail.py")
             at.session_state["dash_selected_source_key"] = "comments"
             at.run(timeout=30)
         self.assertFalse(at.exception, f"detail raised: {at.exception}")
         metrics = {metric.label: metric.value for metric in at.metric}
         self.assertEqual(metrics["情绪分"], "64")
-        self.assertEqual(metrics["情绪来源"], "完整价值评分")
-        self.assertEqual(metrics["完整维度"], "6/6")
+        self.assertEqual(metrics["情绪来源"], "综合价值评分")
+        self.assertEqual(metrics["维度覆盖"], "6/6")
         captions = " ".join(item.value for item in at.caption)
-        self.assertIn("不要求发布、质量门或人工审核", captions)
+        self.assertIn("不要求皮肤已上线、通过质检或经人工审核", captions)
 
     def test_workbench_page_no_import_error(self):
         """Regresses defect #1: the workbench must not raise ImportError from a
         removed ``app.evidence_table`` symbol on any tab."""
-        at = AppTest.from_file("pages/数据工作台.py").run(timeout=60)
+        at = AppTest.from_file("pages/data_workbench.py").run(timeout=60)
         self.assertFalse(at.exception, f"workbench raised: {at.exception}")
 
 

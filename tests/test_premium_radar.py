@@ -121,8 +121,8 @@ class PremiumRadarBundleTests(unittest.TestCase):
         self.assertIn(CANONICAL_RUN_ID, captions)
         metrics = {item.label: item.value for item in at.metric}
         self.assertEqual(metrics["试点皮肤"], "50")
-        self.assertEqual(metrics["完整证据"], "46")
-        self.assertEqual(metrics["部分证据"], "4")
+        self.assertEqual(metrics["证据齐全"], "46")
+        self.assertEqual(metrics["证据不全"], "4")
 
 
 if __name__ == "__main__":

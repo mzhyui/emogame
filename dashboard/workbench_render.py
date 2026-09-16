@@ -362,7 +362,7 @@ def render_cash_value_tab(db_path: Path, source_key: str, payload: dict[str, Any
     from app import _display_number, import_cash_value_upload, save_manual_cash_value
 
     st.subheader("期间现金价值证据")
-    st.caption("这里保存的证据与侧栏“手动模拟”完全分离；模拟不会写入数据库。")
+    st.caption("这里保存的证据与侧栏“手动模拟”互不影响；模拟不会写入数据库。")
     today = __import__("datetime").date.today()
     view_period = st.date_input(
         "查看期间", value=(today - timedelta(days=365), today), key="cash_view_period",
@@ -518,7 +518,7 @@ def render_json_tab(payload: dict[str, Any], source_key: str) -> None:
 
 
 def render_workbench() -> None:
-    """Full workbench page body (used by pages/数据工作台.py)."""
+    """Full workbench page body (used by pages/data_workbench.py)."""
     from app import page_config
 
     page_config()

@@ -15,10 +15,11 @@ from typing import Any
 import streamlit as st
 
 from dashboard.models import DashboardFilters
-from dashboard.query import default_period
+from dashboard.query import default_period, get_hero_names
 
 # Fixed session-state keys shared by every analysis page.
 KEY_SEARCH = "dash_search"
+KEY_HERO = "dash_hero"
 KEY_QUALITY = "dash_quality"
 KEY_ONLINE_FROM = "dash_online_from"
 KEY_ONLINE_TO = "dash_online_to"
@@ -35,12 +36,18 @@ DEFAULT_QUALITIES = [
 
 def render_filter_sidebar(db_path: str | Path) -> DashboardFilters:
     """Render the shared filter widgets and persist them in session_state."""
-    st.sidebar.title("EmoGame 分析看板")
-    st.sidebar.caption("王者荣耀 · 本地 SQLite · 只读分析")
+    st.sidebar.header("筛选分析范围")
+    st.sidebar.caption("王者荣耀 · 皮肤价值分析")
 
     default_start, default_end = default_period(db_path)
 
     st.sidebar.text_input("搜索（英雄 / 皮肤 / 皮肤 ID）", value="", key=KEY_SEARCH)
+    heroes = [None, *get_hero_names(db_path)]
+    if st.session_state.get(KEY_HERO) not in heroes:
+        st.session_state[KEY_HERO] = None
+    st.sidebar.selectbox(
+        "英雄", heroes, format_func=lambda value: value or "全部英雄", key=KEY_HERO,
+    )
     quality = st.sidebar.selectbox(
         "皮肤品质", DEFAULT_QUALITIES, index=0, key=KEY_QUALITY,
     )
@@ -78,6 +85,7 @@ def current_filters() -> DashboardFilters:
 
     return DashboardFilters(
         search=str(st.session_state.get(KEY_SEARCH, "") or ""),
+        hero_name=st.session_state.get(KEY_HERO) or None,
         quality=(st.session_state.get(KEY_QUALITY) or None) or None,
         online_from=_date(KEY_ONLINE_FROM),
         online_to=_date(KEY_ONLINE_TO),

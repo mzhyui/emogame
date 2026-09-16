@@ -49,6 +49,7 @@ def main() -> None:
         rows = get_portfolio_rows(
             db_path,
             search=f.search,
+            hero_name=f.hero_name,
             quality=f.quality,
             online_from=f.online_from,
             online_to=f.online_to,
@@ -88,7 +89,7 @@ def main() -> None:
         idx = event.selection["rows"][0]
         source_key = df.iloc[idx]["source_key"]
         st.session_state["dash_selected_source_key"] = source_key
-        st.switch_page("pages/皮肤详情.py")
+        st.switch_page("pages/skin_detail.py")
 
     # Fallback detail selector (for environments without row selection).
     # Only render when there are rows; an empty result set must not show an
@@ -102,7 +103,7 @@ def main() -> None:
         if st.button("查看详情"):
             source_key = sel.split("(")[-1].rstrip(")")
             st.session_state["dash_selected_source_key"] = source_key
-            st.switch_page("pages/皮肤详情.py")
+            st.switch_page("pages/skin_detail.py")
     elif not sorted_rows:
         from dashboard.components import render_empty_state
 
@@ -157,7 +158,7 @@ def _build_table(rows) -> pd.DataFrame:
             "获取成本(CNY)": display_number(r.cash_avg_spend_cny),
             "现金置信度": display_number(r.cash_confidence),
             "归因方法": attribution_label(r.cash_method),
-            "完整状态": _completeness_label(r),
+            "完整度": _completeness_label(r),
         }
         for r in rows
     ])

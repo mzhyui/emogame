@@ -10,3 +10,6 @@
 [submodule "agent-lightning"]
 	path = agent-lightning
 	url = https://github.com/microsoft/agent-lightning.git
+[submodule "streamlit-sales-dashboard"]
+	path = streamlit-sales-dashboard
+	url = git@github.com:Sven-Bo/streamlit-sales-dashboard.git

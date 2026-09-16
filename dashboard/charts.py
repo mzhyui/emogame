@@ -10,10 +10,18 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from dashboard.components import render_empty_state
-from dashboard.format import attribution_label, display_currency_amount, sort_missing_last
+from dashboard.format import (
+    SCORE_LABEL,
+    attribution_label,
+    display_currency_amount,
+    sort_missing_last,
+)
 from dashboard.models import EmotionStatus, PortfolioSkinRow
 
 ASPECT_LABELS = {
@@ -25,6 +33,21 @@ ASPECT_LABELS = {
     "purchase_intent": "购买意愿",
     "market_heat": "市场热度",
 }
+
+# Layout and blue accent adapted from Sven-Bo/streamlit-sales-dashboard.
+SALES_BLUE = "#0083B8"
+
+
+def render_sales_chart(figure: go.Figure) -> None:
+    """Shared, responsive Plotly presentation for the sales-style overview."""
+    figure.update_layout(
+        template="plotly_white", height=340,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=12, r=12, t=24, b=12),
+        colorway=[SALES_BLUE, "#F2A541", "#7D6CCA"],
+        legend=dict(orientation="h", y=1.15),
+    )
+    st.plotly_chart(figure, width="stretch", config={"displaylogo": False})
 
 
 def quality_distribution_chart(rows: list[PortfolioSkinRow]) -> None:
@@ -38,7 +61,12 @@ def quality_distribution_chart(rows: list[PortfolioSkinRow]) -> None:
     df = pd.DataFrame(
         [{"品质": k, "数量": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])]
     )
-    st.bar_chart(df, x="品质", y="数量", height=300)
+    figure = px.bar(
+        df.sort_values("数量"), x="数量", y="品质", orientation="h",
+        color_discrete_sequence=[SALES_BLUE], text_auto=True,
+    )
+    figure.update_xaxes(showgrid=False)
+    render_sales_chart(figure)
 
 
 def release_revenue_timeline(releases: list[dict[str, Any]], revenue: list[dict[str, Any]]) -> None:
@@ -47,87 +75,86 @@ def release_revenue_timeline(releases: list[dict[str, Any]], revenue: list[dict[
         render_empty_state("当前分析期间内没有收入时间序列或上线事件。")
         return
 
-    rev_df = pd.DataFrame()
-    if revenue:
-        rev_df = pd.DataFrame(revenue, columns=["revenue_date", "estimated_revenue"])
-        rev_df["date"] = pd.to_datetime(rev_df["revenue_date"])
-        rev_df = (
-            rev_df[["date", "estimated_revenue"]]
-            .set_index("date")
-            .resample("D")
-            .sum(numeric_only=True)
-            .reset_index()
-            .rename(columns={"estimated_revenue": "估算收入"})
-        )
-    else:
-        st.info("当前期间没有收入数据；仅展示上线事件。")
-
-    # Release events as a visibly-plotted event series on the same date axis.
-    # Each release day carries a marker count so it appears on the timeline
-    # instead of only in a caption. Aligned to the revenue resample grid when
-    # revenue exists, otherwise plotted on its own daily grid.
-    if releases:
-        rel_df = pd.DataFrame(releases)
-        rel_df["date"] = pd.to_datetime(rel_df["date"])
-        rel_event = (
-            rel_df.groupby(rel_df["date"].dt.normalize())
-            .size()
-            .reset_index(name="上线事件")
-        )
-        rel_event.columns = ["date", "上线事件"]
-        rel_event["date"] = pd.to_datetime(rel_event["date"])
-        if not rev_df.empty:
-            merged = rev_df.merge(rel_event, on="date", how="outer").fillna(0)
-            merged["上线事件"] = merged["上线事件"].astype(int)
-            st.line_chart(merged, x="date", y=["估算收入", "上线事件"], height=300)
-        else:
-            st.line_chart(rel_event, x="date", y="上线事件", height=300)
-        st.caption(f"筛选范围内共 {len(rel_df)} 个上线事件。")
-    elif not rev_df.empty:
-        st.line_chart(rev_df, x="date", y="估算收入", height=300)
+    # Keep currencies separate and retain missing days as gaps, never zeros.
+    currencies = sorted({str(row.get("currency") or "未标注币种") for row in revenue})
+    for currency in currencies or [None]:
+        figure = make_subplots(specs=[[{"secondary_y": True}]])
+        selected = [row for row in revenue if str(row.get("currency") or "未标注币种") == currency]
+        if selected:
+            frame = pd.DataFrame(selected)
+            frame["date"] = pd.to_datetime(frame["revenue_date"])
+            daily = frame.set_index("date")["estimated_revenue"].resample("D").sum(min_count=1)
+            figure.add_trace(go.Scatter(
+                x=daily.index, y=daily.values, name=f"游戏收入 ({currency})",
+                mode="lines", line=dict(color=SALES_BLUE), connectgaps=False,
+            ), secondary_y=False)
+        if releases:
+            counts = pd.Series(pd.to_datetime([row["date"] for row in releases])).value_counts().sort_index()
+            figure.add_trace(go.Bar(
+                x=counts.index, y=counts.values, name="筛选内上线皮肤",
+                marker_color="#F2A541", opacity=0.65,
+            ), secondary_y=True)
+        figure.update_yaxes(title_text=f"游戏估算收入 ({currency or '无收入数据'})", secondary_y=False)
+        figure.update_yaxes(title_text="上线皮肤数", dtick=1, showgrid=False, secondary_y=True)
+        render_sales_chart(figure)
+    st.caption(f"筛选范围内 {len(releases)} 个上线事件；游戏收入为全游戏背景数据。")
 
 
 def emotion_vs_cash_scatter(rows: list[PortfolioSkinRow]) -> None:
     """Scatter of full operational value score vs attributed cash revenue."""
-    scored = [r for r in rows if r.emotion_status == EmotionStatus.SCORED.value]
+    scored = [r for r in rows if r.emotion_score is not None and r.cash_attributed_revenue is not None]
     if not scored:
         render_empty_state(
-            "暂无具有可用情绪来源的皮肤，无法绘制情绪分 × 现金价值散点图。",
+            "当前没有同时具有价值分和可换算 CNY 收入的皮肤。",
         )
         return
     df = pd.DataFrame([
         {
-            "情绪分": r.emotion_score or 0,
-            "估算归因收入": r.cash_attributed_revenue or 0.0,
+            SCORE_LABEL: r.emotion_score,
+            "估算归因收入 (CNY)": r.cash_attributed_revenue,
             "皮肤": f"{r.hero_name}/{r.skin_name}",
+            "现金置信度": r.cash_confidence,
+            "归因方法": attribution_label(r.cash_method),
+            "评分状态": r.emotion_score_status or "未标注",
         }
         for r in scored
     ])
-    st.scatter_chart(df, x="情绪分", y="估算归因收入", height=320)
+    figure = px.scatter(
+        df, x=SCORE_LABEL, y="估算归因收入 (CNY)", hover_name="皮肤",
+        hover_data=["现金置信度", "归因方法", "评分状态"],
+        color_discrete_sequence=[SALES_BLUE],
+    )
+    figure.update_traces(marker_size=10)
+    render_sales_chart(figure)
+    st.caption(f"双值覆盖 {len(scored)}/{len(rows)}；缺少任一数值的皮肤不绘点。")
 
 
 def top_value_ranking(rows: list[PortfolioSkinRow], by: str = "emotion") -> None:
     """Leaderboard containing every skin with a value-present score."""
-    scored = [r for r in rows if r.emotion_status == EmotionStatus.SCORED.value]
+    key = "emotion_score" if by == "emotion" else "cash_attributed_revenue"
+    scored = [r for r in rows if getattr(r, key) is not None]
     if not scored:
         render_empty_state(
-            "当前没有可用价值分，排行留空。",
+            "当前筛选指标没有可用数值，排行留空。",
         )
         return
-    key = "emotion_score" if by == "emotion" else "cash_attributed_revenue"
     ranked = sort_missing_last(scored, key, reverse=True)
     df = pd.DataFrame([
         {"排名": i + 1, "皮肤": f"{r.hero_name}/{r.skin_name}",
-         "情绪分": r.emotion_score,
+         SCORE_LABEL: r.emotion_score,
+         "评分状态": r.emotion_score_status,
          "95% CI": (
              f"{r.emotion_ci_low:.1f}–{r.emotion_ci_high:.1f}"
              if r.emotion_ci_low is not None and r.emotion_ci_high is not None
              else "—"
          ),
-         "估算归因收入": r.cash_attributed_revenue}
+         "估算归因收入 (CNY)": r.cash_attributed_revenue,
+         "现金置信度": r.cash_confidence,
+         "归因方法": attribution_label(r.cash_method),
+         "Source key": r.source_key}
         for i, r in enumerate(ranked[:20])
     ])
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
 
 
 def coverage_gap_chart(gaps: dict[str, int]) -> None:

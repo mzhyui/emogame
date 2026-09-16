@@ -58,19 +58,22 @@ ASPECT_LABELS = {
 def page_config() -> None:
     st.set_page_config(
         page_title="EmoGame 分析看板",
+        page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     st.markdown(
         """
         <style>
-        .block-container { padding-top: 1.25rem; padding-bottom: 2rem; }
+        .block-container { padding-top: 2rem; padding-bottom: 2rem; max-width: 1500px; }
         [data-testid="stMetric"] {
             border: 1px solid #e6e8ef;
             padding: 10px 12px;
-            border-radius: 6px;
-            background: #ffffff;
+            border-radius: 10px;
+            border-top: 3px solid #0083B8;
+            background: var(--secondary-background-color);
         }
+        h1 { letter-spacing: -0.035em; }
         [data-testid="stSidebar"] { border-right: 1px solid #e6e8ef; }
         .small-muted { color: #667085; font-size: 0.86rem; }
         .audit-note {
@@ -412,8 +415,8 @@ def _premium_radar_panel() -> None:
     """Render the frozen premium-pilot radar report in a scrollable panel."""
     st.title("皮肤溢价雷达")
     st.caption(
-        "感知溢价试点与 RuleEngine 情绪证据严格分离；收入仅作验证轴，"
-        "不参与溢价评分。可按英雄、皮肤或 source key 搜索。"
+        "感知溢价试点的评分与 RuleEngine 的情绪分各自独立计算；收入只作验证参考，"
+        "不参与溢价打分。可按英雄、皮肤或 source key 搜索。"
     )
 
     run_dir = PREMIUM_RADAR_RUN_DIR
@@ -432,8 +435,8 @@ def _premium_radar_panel() -> None:
     st.caption(f"运行 ID：{bundle.run_id}")
     metrics = st.columns(3)
     metrics[0].metric("试点皮肤", bundle.selected)
-    metrics[1].metric("完整证据", bundle.complete)
-    metrics[2].metric("部分证据", bundle.partial)
+    metrics[1].metric("证据齐全", bundle.complete)
+    metrics[2].metric("证据不全", bundle.partial)
     components.html(
         bundle.html,
         height=1_300,
@@ -442,9 +445,17 @@ def _premium_radar_panel() -> None:
 
 
 def _portfolio_overview(db_path: str) -> None:
-    """Default landing page: portfolio overview."""
+    """Sven-Bo sales-dashboard composition adapted to the skin portfolio."""
+    from dataclasses import asdict
     from dashboard import charts, filters
-    from dashboard.format import display_currency_amount, display_number, display_percent
+    from dashboard.analysis import GROUPS, METRICS, build_query_spec, summarize_rows
+    from dashboard.format import (
+        MEAN_SCORE_LABEL,
+        SCORE_LABEL,
+        display_currency_amount,
+        display_number,
+        display_percent,
+    )
     from dashboard.query import (
         get_coverage_gaps,
         get_portfolio_rows,
@@ -455,21 +466,16 @@ def _portfolio_overview(db_path: str) -> None:
     filters.render_filter_sidebar(db_path)
     f = filters.current_filters()
 
-    if not f.is_valid_period():
+    if not f.is_valid_period() or (
+        f.online_from and f.online_to and f.online_to < f.online_from
+    ):
         st.error("分析期间结束日期早于开始日期，请重新选择期间。")
         return
 
     with st.spinner("加载组合数据…"):
         rows = get_portfolio_rows(
             db_path,
-            search=f.search,
-            quality=f.quality,
-            online_from=f.online_from,
-            online_to=f.online_to,
-            emotion_coverage=f.emotion_coverage,
-            cash_coverage=f.cash_coverage,
-            period_start=f.period_start,
-            period_end=f.period_end,
+            **asdict(f),
         )
         summary = get_portfolio_summary(rows, db_path=db_path)
         releases, revenue = get_release_revenue_timeline(
@@ -480,76 +486,95 @@ def _portfolio_overview(db_path: str) -> None:
             online_to=f.online_to,
         )
 
-    st.title("组合总览")
+    selected_keys = {row.source_key for row in rows}
+    releases = [release for release in releases if release["source_key"] in selected_keys]
+
+    st.title("📊 组合总览")
     st.caption(
-        f"筛选范围内 {summary.total_skins} 个皮肤 · 王者荣耀 · 只读分析。"
-        "每个目录皮肤都生成完整六维价值分；观察值优先，缺失维度使用"
-        "显式目录估计补全，不要求发布、质量门或人工审核。"
+        f"王者荣耀 · {summary.total_skins:,} 个皮肤 · "
+        f"{len({row.hero_name for row in rows}):,} 位英雄 · "
+        f"{f.period_start} 至 {f.period_end}"
     )
-    if summary.emotion_cohort_run_id:
-        st.caption(
-            "现有观察队列（固定 100 皮肤） · "
-            f"{summary.emotion_observation_start} 至 {summary.emotion_observation_end} · "
-            f"已完整评分 {summary.emotion_cohort_scored_count}/"
-            f"{summary.emotion_cohort_size}。观察队列只增强对应维度，不控制评分资格。"
-        )
+    if not rows:
+        st.warning("当前筛选条件下没有皮肤数据，请调整侧栏筛选或检查数据是否已导入。")
+        return
 
-    # Top KPI row.
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("筛选后皮肤数", display_number(summary.total_skins))
-    k2.metric(
-        "完整评分皮肤",
-        f"{summary.scored_count}",
-        help=(
-            f"目录完整评分 {summary.catalog_scored_count}/"
-            f"{summary.catalog_size}；筛选内覆盖率 "
-            f"{display_percent(summary.scored_rate * 100)}；"
-            f"观察队列完整评分 {summary.emotion_cohort_scored_count}/"
-            f"{summary.emotion_cohort_size}"
-        ),
-    )
-    k3.metric(
-        "有现金记录皮肤",
-        f"{summary.cash_count}",
-        help=f"覆盖率 {display_percent(summary.cash_rate * 100)}",
-    )
-    k4.metric(
-        "可换算 CNY 归因收入",
-        display_currency_amount(summary.portfolio_attributed_revenue_cny, "CNY"),
-    )
-    k5.metric(
-        "综合证据完整率",
-        display_percent(summary.evidence_completeness_rate * 100),
-    )
+    cash_values = [row.cash_attributed_revenue for row in rows if row.cash_attributed_revenue is not None]
+    scores = [row.emotion_score for row in rows if row.emotion_score is not None]
+    total_cash = sum(cash_values, 0.0) if cash_values else None
+    average_cash = total_cash / len(cash_values) if cash_values else None
+    average_score = sum(scores) / len(scores) if scores else None
+    k1, k2, k3 = st.columns(3)
+    k1.metric("归因收入合计", display_currency_amount(total_cash, "CNY"))
+    k1.caption(f"有 CNY 收入 {len(cash_values)}/{len(rows)} 个皮肤 · 包含估算归因")
+    k2.metric(MEAN_SCORE_LABEL, display_number(average_score))
+    k2.caption(f"有分值 {len(scores)}/{len(rows)} · 满分 100 · 观察值 + 目录估计")
+    k3.metric("有收入皮肤平均收入", display_currency_amount(average_cash, "CNY"))
+    k3.caption(f"分母：{len(cash_values)} 个有数值的 CNY 收入皮肤")
 
-    if summary.scored_count == 0:
-        st.info(
-            "当前筛选范围内没有可用情绪来源，情绪分与排行均留空。"
-        )
-
-    # Charts.
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("皮肤品质分布")
         charts.quality_distribution_chart(rows)
     with c2:
-        st.subheader("上线事件与游戏收入时间线")
-        charts.release_revenue_timeline(releases, revenue)
-
-    st.divider()
-    c3, c4 = st.columns(2)
-    with c3:
-        st.subheader("完整价值分 × 估算现金价值")
+        st.subheader(f"{SCORE_LABEL} × 估算现金价值")
         charts.emotion_vs_cash_scatter(rows)
-    with c4:
-        st.subheader("完整价值分排行")
-        charts.top_value_ranking(rows, by="emotion")
 
     st.divider()
-    st.subheader("证据覆盖缺口摘要")
-    gaps = summary.coverage_gaps or get_coverage_gaps(rows)
-    charts.coverage_gap_chart(gaps)
+    st.subheader("皮肤排行")
+    # Keep sorting keys independent of user-facing wording.
+    ranking_labels = {"emotion": SCORE_LABEL, "cash": "估算归因收入"}
+    ranking = st.radio(
+        "排行指标", list(ranking_labels),
+        format_func=ranking_labels.__getitem__, horizontal=True,
+    )
+    charts.top_value_ranking(rows, by=ranking)
+    st.caption("前 20 名 · 表中保留评分状态、置信区间与现金归因方法。")
+
+    st.divider()
+    st.subheader("上线事件与游戏收入时间线")
+    charts.release_revenue_timeline(releases, revenue)
+
+    with st.expander("分析问题 · 按英雄或品质比较"):
+        group = st.selectbox("比较维度", list(GROUPS), format_func=GROUPS.get)
+        metrics = st.multiselect("分析指标", list(METRICS),
+                                 default=["skin_count", "mean_score", "cash_total"],
+                                 format_func=METRICS.get)
+        if metrics:
+            spec = build_query_spec(f, group, metrics)
+            frame = summarize_rows(rows, spec)
+            st.dataframe(frame, hide_index=True, width="stretch")
+            st.caption("沿用侧栏范围；均值仅使用有数值皮肤，缺失值保留为空。")
+            st.download_button("下载分析表 CSV", frame.to_csv(index=False).encode("utf-8-sig"),
+                               "portfolio-analysis.csv", "text/csv")
+            with st.expander("查询与来源"):
+                st.json(spec)
+                st.download_button(
+                    "下载查询与来源 JSON",
+                    json.dumps({"query": spec, "source_keys": sorted(selected_keys)}, ensure_ascii=False, indent=2),
+                    "portfolio-query.json", "application/json",
+                )
+        else:
+            st.info("请选择至少一个分析指标。")
+
+    with st.expander("数据覆盖与评分说明"):
+        st.caption(
+            f"目录里每张皮肤都会算出{SCORE_LABEL}：优先采用实际观察到的维度，"
+            "缺失维度用目录估计补齐；不要求皮肤已上线、通过质检或经人工审核。"
+        )
+        st.caption(
+            f"已评分 {summary.scored_count}/{summary.total_skins} · "
+            f"现金记录 {summary.cash_count}/{summary.total_skins} · "
+            f"证据覆盖率 {display_percent(summary.evidence_completeness_rate * 100)}"
+        )
+        if summary.emotion_cohort_run_id:
+            st.caption(
+                f"观察队列 {summary.emotion_cohort_run_id} · "
+                f"{summary.emotion_observation_start} 至 {summary.emotion_observation_end} · "
+                f"已评分 {summary.emotion_cohort_scored_count}/{summary.emotion_cohort_size}"
+            )
+        charts.coverage_gap_chart(summary.coverage_gaps or get_coverage_gaps(rows))
 
 
 def main() -> None:
@@ -557,10 +582,10 @@ def main() -> None:
     db_path = str(DEFAULT_DB_PATH)
 
     overview = st.Page(lambda: _portfolio_overview(db_path), title="组合总览", icon="📊")
-    explore = st.Page("pages/皮肤探索.py", title="皮肤探索", icon="🔍")
-    detail = st.Page("pages/皮肤详情.py", title="皮肤详情", icon="🧬")
+    explore = st.Page("pages/skin_explorer.py", title="皮肤探索", icon="🔍")
+    detail = st.Page("pages/skin_detail.py", title="皮肤详情", icon="🧬")
     radar = st.Page(_premium_radar_panel, title="溢价雷达", icon="🕸️")
-    workbench = st.Page("pages/数据工作台.py", title="数据工作台", icon="🛠️")
+    workbench = st.Page("pages/data_workbench.py", title="数据工作台", icon="🛠️")
 
     pg = st.navigation([overview, explore, detail, radar, workbench])
     pg.run()

@@ -8,6 +8,15 @@ from __future__ import annotations
 
 from typing import Any
 
+# ── The scored metric's one true name ──────────────────────────────────────
+# Every skin in the catalog gets this score, so it must read as a single
+# concept across KPIs, chart axes, ranking controls and the export columns.
+SCORE_LABEL = "综合价值分"
+MEAN_SCORE_LABEL = f"平均{SCORE_LABEL}"
+# The same concept, phrased for the 「情绪来源」 metric, which names a scoring
+# method rather than a quantity — so it cannot be derived from SCORE_LABEL.
+SCORE_SOURCE_LABEL = "综合价值评分"
+
 # ── Cash attribution method labels ──────────────────────────────────────────
 ATTRIBUTION_METHOD_LABELS: dict[str, str] = {
     "manual_exact": "人工精确值",
@@ -22,7 +31,7 @@ EMOTION_STATUS_LABELS: dict[str, str] = {
     "missing": "无来源",
 }
 EMOTION_SOURCE_LABELS: dict[str, str] = {
-    "value_present": "完整价值评分",
+    "value_present": SCORE_SOURCE_LABEL,
     "human_final_truth": "人工最终真值",
     "selected_comment_model": "评论模型评分",
     "published_rule_engine": "已发布模型评分",

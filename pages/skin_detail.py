@@ -1,7 +1,7 @@
-"""皮肤详情页：完整价值评分、感知价值与现金价值三块分析。
+"""皮肤详情页：综合价值评分、感知价值与现金价值三块分析。
 
 来源、计算口径、警告、证据明细和原始 JSON 默认折叠。观察值覆盖对应目录估计，
-但发布、质量门和人工审核均不控制评分资格。
+但皮肤是否上线、是否通过质检、是否经人工审核，都不影响评分资格。
 """
 
 from __future__ import annotations
@@ -80,12 +80,12 @@ def main() -> None:
         display_number(emotion_score) if emotion_score is not None else "",
     )
     ecols[1].metric("情绪来源", emotion_source_label(emotion_source))
-    ecols[2].metric("完整维度", "6/6" if emotion_score is not None else "")
+    ecols[2].metric("维度覆盖", "6/6" if emotion_score is not None else "")
     ecols[3].metric("评分支持度", display_number(evaluation.get("confidence")))
     if emotion_score is not None:
         st.caption(
             f"价值存在即评分：{len(observed_aspects)} 个观察维度，"
-            f"{len(estimated_aspects)} 个目录估计维度；不要求发布、质量门或人工审核。"
+            f"{len(estimated_aspects)} 个目录估计维度；不要求皮肤已上线、通过质检或经人工审核。"
         )
     charts.aspect_radar(displayed_aspects)
 

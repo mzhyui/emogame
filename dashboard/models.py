@@ -49,6 +49,7 @@ class DashboardFilters:
     cash_coverage: Literal["all", "has_record", "missing"] = "all"
     period_start: date | None = None
     period_end: date | None = None
+    hero_name: str | None = None
 
     def online_filter_active(self) -> bool:
         return self.online_from is not None or self.online_to is not None

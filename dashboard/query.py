@@ -430,6 +430,22 @@ def _batch_model_comment_scores(
 
 
 # ── Portfolio rows ───────────────────────────────────────────────────────────
+def get_hero_names(db_path: str | Path) -> list[str]:
+    """List available hero filters without scoring or writing to the catalog."""
+    if not Path(db_path).is_file():
+        return []
+    try:
+        with connect_readonly(db_path) as conn:
+            if not table_exists(conn, "skins"):
+                return []
+            return [row[0] for row in conn.execute(
+                "SELECT DISTINCT hero_name FROM skins "
+                "WHERE hero_name IS NOT NULL AND hero_name != '' ORDER BY hero_name"
+            )]
+    except sqlite3.Error:
+        return []
+
+
 def get_portfolio_rows(
     db_path: str | Path,
     *,
@@ -439,6 +455,7 @@ def get_portfolio_rows(
     online_to: date | None = None,
     emotion_coverage: str = "all",
     cash_coverage: str = "all",
+    hero_name: str | None = None,
     period_start: date | None = None,
     period_end: date | None = None,
 ) -> list[PortfolioSkinRow]:
@@ -465,6 +482,8 @@ def get_portfolio_rows(
 
     rows: list[PortfolioSkinRow] = []
     for skin in skins:
+        if hero_name is not None and skin.get("hero_name") != hero_name:
+            continue
         source_key = skin["source_key"]
         online_text = skin.get("online_date")
         online_d = _safe_date(online_text)
