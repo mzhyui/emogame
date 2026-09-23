@@ -233,6 +233,83 @@ def get_market_trends(game_genre: str) -> dict:
                     └──────────┘
 ```
 
+## 报告智能体 GRPO 训练
+
+报告生成智能体用 `scripts/train_reporter_grpo.py` 训练，底层是 `minimind/trainer/train_grpo.py`
+（git submodule）。脚本有两个模式：
+
+```bash
+# 1. 把 reporter_states.jsonl 压缩成 RLAIFDataset 提示词
+.venv/bin/python3 scripts/train_reporter_grpo.py \
+    data/reporter_states.jsonl data/reporter_grpo.jsonl --prepare
+
+# 2. 启动训练（其余参数原样透传给 train_grpo.py）
+.venv/bin/python3 scripts/train_reporter_grpo.py launch \
+    --verifier-only --num_generations 4 --batch_size 2
+```
+
+### 训练几何：为什么必须在 `minimind/trainer/` 下运行
+
+minimind 的所有默认路径都是相对 `minimind/trainer/` 写的：`../out`（权重读写）、
+`../model`（tokenizer）、`../../internlm2-1_8b-reward`（奖励模型）。在仓库根目录运行会
+同时打断这三条路径 —— 这是 2026-09-17 那次 GRPO 运行在第一步之前就失败的原因。
+`launch` 模式自己 `chdir` 到该目录，调用者不需要记住这件事。
+
+基础权重放在 `minimind/out/full_sft_768.pth`（来自 modelscope `gongjy/minimind-3-pytorch`）。
+注意 `init_model` 读权重的 `save_dir` 是硬编码默认值，不受 `--save_dir` 影响，因此
+权重读取位置和 GRPO 输出位置必然是同一个目录，不提供覆盖选项。
+
+### 奖励注入：不改 submodule
+
+`train_grpo.py` 既没有 reward hook 也没有 `main()`（入口是顶层 `if __name__ == "__main__"`），
+无法被 import 后调用。`launch` 模式因此在执行前替换
+`trainer.trainer_utils.LMForRewardModel` 上的两个属性，再用
+`runpy.run_path(..., run_name="__main__")` 执行原脚本，submodule 保持干净：
+
+| 替换 | 目的 |
+|------|------|
+| `get_score` | 混合 `verify_report()`（章节覆盖 + skin_id 落地）与奖励模型分数 |
+| `__init__` | 仅 `--verifier-only` 时置空，跳过加载奖励模型 |
+| `lm_checkpoint` | 把断点续训状态从 `../checkpoints` 改写到 `out/` |
+
+`get_score` 必须装成**函数**而不是可调用对象：只有函数在实例属性查找时会被绑定，
+可调用对象会以 `get_score(messages, response)` 被调用并因参数个数不符而崩溃。
+
+`lm_checkpoint` 的改写是必要的：`train_grpo` 在保存和恢复两处都硬编码
+`save_dir='../checkpoints'`，而 minimind 的 `.gitignore` 只忽略 `out` 不忽略
+`checkpoints`，不改写的话每次训练都会在 submodule 里留下约 650MB 未跟踪文件。
+读写一起改写，因此 `--from_resume 1` 仍然可用。
+
+### `--verifier-only`
+
+内置的 internlm2-1.8B 奖励模型无法在当前环境运行：它的 remote code 面向
+transformers 4.41（`rope_scaling["type"]`、`DynamicCache.from_legacy_cache`、
+`DynamicCache.to_legacy_cache`），而本环境是 transformers 5.10.2；强行打补丁后
+前向可以跑通但**返回 NaN**（静默污染而非报错）。因此默认推荐 `--verifier-only`，
+奖励完全来自可审计的 `verify_report()`。
+
+需要注意：GRPO 是组内相对优势，当同一组的 2–4 条生成都拿不到任何章节标题时，
+verifier 奖励在该组内是常数、梯度为零，此时学习信号只来自长度/重复惩罚等通用项。
+verifier 要等策略能偶尔写出章节标题后才开始贡献梯度。
+
+### 提示词预算
+
+`train_grpo.py` 用 `input_ids[:, -max_seq_len:]` **从左侧**截断提示词（默认 768）。
+源状态记录约 1974 token，压缩前 100% 被截断，会丢掉 system prompt 和大部分状态。
+压缩后中位数约 632 token、最大 753，全部落在窗口内。压缩规则见
+`compact_state()` 顶部的 `_DROPPED_PRICING_KEYS` 注释块 —— 每个被丢弃的字段都注明
+了「哪个更便宜的字段已经表达了同一事实」。
+
+### 运行证据
+
+| 产物 | 位置 |
+|------|------|
+| GRPO 权重 | `minimind/out/grpo_768.pth` |
+| 逐样本奖励审计 | `minimind/out/grpo_reward_audit_<UTC>.jsonl` |
+| stdout | 建议 `screen` + `tee` 落盘（上次运行的证据只存在于 screen 回滚缓冲，机器重启后全部丢失） |
+
+审计文件按 UTC 时间戳命名，避免重跑覆盖或混入上一次运行的记录。
+
 ## 下一步
 
 - → [07 — 商业价值分析](07-business-analysis.md)
