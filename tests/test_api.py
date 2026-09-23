@@ -92,6 +92,38 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["skins"][0]["source_key"], "107-08")
 
+    def test_dashboard_overview_uses_read_only_portfolio_contract(self):
+        response = self.client.get(
+            "/api/dashboard/overview",
+            params={
+                "db": str(self.db_path),
+                "period_start": "2020-01-01",
+                "period_end": "2020-12-31",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["scope"]["read_only"])
+        self.assertEqual(payload["scope"]["score_label"], "综合价值分")
+        self.assertEqual(payload["kpis"]["skin_count"], 1)
+        self.assertEqual(payload["filters"]["heroes"], ["赵云"])
+        self.assertEqual(payload["quality_distribution"], [{"quality": "史诗限定", "count": 1}])
+        self.assertEqual(payload["timeline"]["releases"][0]["source_key"], "107-08")
+
+    def test_dashboard_overview_rejects_reversed_period(self):
+        response = self.client.get(
+            "/api/dashboard/overview",
+            params={
+                "db": str(self.db_path),
+                "period_start": "2020-02-01",
+                "period_end": "2020-01-01",
+            },
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("period_end", response.json()["detail"])
+
     def test_evaluate_with_inline_signals(self):
         response = self.client.post(
             "/api/evaluate",

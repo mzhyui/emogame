@@ -13,3 +13,6 @@
 [submodule "streamlit-sales-dashboard"]
 	path = streamlit-sales-dashboard
 	url = git@github.com:Sven-Bo/streamlit-sales-dashboard.git
+[submodule "sakai-vue"]
+	path = sakai-vue
+	url = https://github.com/primefaces/sakai-vue.git
