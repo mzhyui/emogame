@@ -91,11 +91,12 @@ python crawlers/wzry_skin_crawler.py --limit 50
 
 SQLite 表：
 
-| 表 | 用途 |
-|------|------|
-| `crawl_runs` | 记录每次采集的来源、数量和失败统计 |
-| `heroes` | 英雄基础信息和皮肤数量 |
-| `skins` | 皮肤目录与官方增强字段 |
+
+| 表            | 用途                                   |
+| --------------- | ---------------------------------------- |
+| `crawl_runs`  | 记录每次采集的来源、数量和失败统计     |
+| `heroes`      | 英雄基础信息和皮肤数量                 |
+| `skins`       | 皮肤目录与官方增强字段                 |
 | `skin_assets` | 图片 URL、本地路径、下载状态和 SHA-256 |
 
 查询与过滤统一通过 `data/skin_repository.py`：
@@ -196,16 +197,18 @@ class SecondaryMarketCrawler:
 
 ## 反爬策略矩阵
 
-| 目标站点 | 难度 | 策略 | 频率限制 |
-|----------|------|------|----------|
-| pvp.qq.com | 低 | 直接请求 JSON API，无 JS 渲染 | 1 req/s |
-| 贴吧 | 中 | Selenium + 随机延迟 (2-5s) + Cookie 池 | 10 req/min |
-| NGA | 中 | httpx + 登录态 Cookie | 3 req/min |
-| Bilibili | 中 | 开放 API (api.bilibili.com) + UA 轮换 | 5 req/s |
-| 闲鱼 | 高 | APP 抓包 + Token 刷新 + 代理 IP | 5 req/min |
-| 百度指数 | 高 | 官方付费 API 或替代（微信指数） | — |
+
+| 目标站点   | 难度 | 策略                                   | 频率限制   |
+| ------------ | ------ | ---------------------------------------- | ------------ |
+| pvp.qq.com | 低   | 直接请求 JSON API，无 JS 渲染          | 1 req/s    |
+| 贴吧       | 中   | Selenium + 随机延迟 (2-5s) + Cookie 池 | 10 req/min |
+| NGA        | 中   | httpx + 登录态 Cookie                  | 3 req/min  |
+| Bilibili   | 中   | 开放 API (api.bilibili.com) + UA 轮换  | 5 req/s    |
+| 闲鱼       | 高   | APP 抓包 + Token 刷新 + 代理 IP        | 5 req/min  |
+| 百度指数   | 高   | 官方付费 API 或替代（微信指数）        | —         |
 
 ### 通用反反爬措施
+
 - **User-Agent 池**：20+ 真实浏览器 UA 轮换
 - **请求间隔**：正态分布随机延迟 `N(μ=3s, σ=1s)`
 - **失败重试**：指数退避 `delay = min(60, 2^retry + random(0,1))`
