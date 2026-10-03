@@ -1,5 +1,10 @@
 # 06 — 智能体执行架构
 
+可执行的本地实现见 [18 — 本地 Agent 全流程](18-local-agent-pipeline.md)：
+`scripts/run_local_agent.py` 接收用户问题，以固定提示词、SQLite 资料和本地 Ollama
+完成下面的六阶段工作流。当前模型推理复用 `RuleEngine`；训练后集成预测与人民币
+定价区间尚未实现，具体数据边界、运行命令和产物说明见该指南。
+
 ## 多智能体协作系统
 
 基于 **LangGraph** 构建有状态的多智能体工作流，6 个 Agent 协作完成端到端评估。
@@ -84,7 +89,6 @@ def create_evaluation_graph() -> StateGraph:
     # 定义边
     workflow.set_entry_point("collect_data")
     workflow.add_edge("collect_data", "vlm_analyze")
-    workflow.add_edge("vlm_analyze", "feature_engineer")
     workflow.add_edge("feature_engineer", "model_inference")
     workflow.add_edge("model_inference", "business_analyze")
     workflow.add_edge("business_analyze", "generate_report")
@@ -95,6 +99,7 @@ def create_evaluation_graph() -> StateGraph:
         "vlm_analyze",
         lambda s: "error_handler" if s["errors"] else "feature_engineer",
     )
+    workflow.add_edge("error_handler", END)
 
     return workflow.compile()
 ```

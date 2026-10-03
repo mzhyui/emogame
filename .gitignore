@@ -29,6 +29,10 @@ data/vlm_cache/
 *.bin
 *.safetensors
 
+# Downloaded Hugging Face reward model (3.2 GB; weights are ignored above,
+# so tracking only the configs and tokenizer would be an incomplete model)
+internlm2-1_8b-reward/
+
 # Jupyter
 notebooks/.ipynb_checkpoints/
 *.ipynb_checkpoints/

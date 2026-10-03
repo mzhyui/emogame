@@ -104,4 +104,26 @@
 
 
 ## TODO
+
 - TODO 2026-08-07 git.V.44214: separate data utils and data assets
+- [ ] Submodule persistence (2026-09-23): create or verify forks of `minimind`
+      and `sakai-vue` under `mzhyui`; preserve the existing local commits, keep
+      the original repositories as `upstream`, and use our forks as `origin`.
+- [ ] Publish the custom commits on durable branches in repositories we control:
+      `minimind` (`54d11bd`), `sakai-vue` (`a30e459`), and `weiboSpider`
+      (`5dc4d76`). Their publication was not verified against live GitHub;
+      check remote availability before marking this complete.
+- [ ] Update `.gitmodules` to use our MiniMind and Sakai forks, synchronize local
+      submodule URLs with `git submodule sync --recursive`, and commit the URL
+      changes and submodule pointers in `emogame` after publishing the submodule
+      commits. `weiboSpider` and `hero-skin-image` already use our namespace.
+- [ ] Apply the same fork setup before publishing custom changes to
+      `agent-lightning` or `streamlit-sales-dashboard`.
+- [ ] Document and adopt the ongoing publication order: commit inside each
+      changed submodule, push its branch to our fork, then commit the updated
+      submodule pointer in `emogame` and push the parent repository. The parent
+      stores only commit IDs; pushing it does not upload submodule files or
+      preserve uncommitted submodule edits.
+- [ ] Verify recovery with a fresh `git clone --recurse-submodules` of `emogame`
+      after publication, confirming that every recorded submodule commit can be
+      fetched and that the custom changes are present.

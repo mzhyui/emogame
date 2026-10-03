@@ -22,6 +22,9 @@
 | 13 | [情绪证据协议](13-emotion-evidence-protocol.md) | 100 皮肤队列、标注、资格门槛、发布门槛和声明边界 |
 | 14 | [情绪证据操作手册](14-emotion-evidence-operations.md) | 采集、人工复核、最终真值和评分工件运行手册 |
 | 15 | [当前皮肤评分器](15-current-skin-scorer.md) | 当前经济/现金、感知溢价、情绪模型、实现、数据与结果 |
+| 17 | [Vue 与前端设计：25 页 PPT 提纲](17-vue-frontend-design-ppt-outline.md) | Vue 3 基础、EmoGame 看板数据流与前端设计的 25 页英文演示提纲 |
+| 19 | [CS329A Test-Time Compute Scaling](19-cs329a-test-time-compute-scaling.md) | Part 2 推理计算扩展、官方作业接口、验证与修订、Archon、成本核算和评估方法 |
+| 20 | [CS329A Robust Verification](20-cs329a-robust-verification.md) | Part 3 判别式验证、ORM/PRM、Math-Shepherd、弱验证器集成、官方作业接口与 EmoGame 证据核验 |
 
 ## 快速导航
 
