@@ -1,4 +1,71 @@
-# EmoGame — Backlog
+# EmoGame
+
+## Vue dashboard: startup and deployment
+
+Use Python 3.12+ and Node.js 20.19+ or 22.12+. Run these commands from the
+repository root. The Vue frontend is in the `sakai-vue` submodule.
+
+Install dependencies on first setup (skip the venv command if it already exists):
+
+```bash
+git submodule update --init sakai-vue
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm --prefix sakai-vue ci
+```
+
+Start FastAPI in one terminal:
+
+```bash
+.venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+Start Vue in another terminal, then open `http://localhost:5173`:
+
+```bash
+npm --prefix sakai-vue run dev -- --host 0.0.0.0 --port 5173 --strictPort
+```
+
+Vite proxies `/api` to `http://127.0.0.1:8000`. The dashboard reads the local
+dataset; starting these servers does not populate missing data.
+
+For production, build the static frontend:
+
+```bash
+npm --prefix sakai-vue run build
+```
+
+Serve `sakai-vue/dist` with a web server, keep FastAPI running under a service
+manager, and route `/api/` to it on the same origin. For example, an nginx
+server block (replace `/path/to/emogame` with your deployment directory):
+
+```nginx
+server {
+    listen 80;
+    server_name localhost;
+    root /path/to/emogame/sakai-vue/dist;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+The `index.html` fallback supports Vue Router URLs. The nginx process needs
+read/traverse access to the deployment directory. Configure your domain and TLS
+for a public deployment. Vite's development server and `npm run preview` are
+local development/build-preview tools. If using a separate API origin, set
+`VITE_API_BASE_URL` at build time and configure CORS explicitly on FastAPI.
+
+## Backlog
 
 > Prioritized, measurable backlog. Checked items have code + tests or a dated
 > reconciliation report that verify the stated outcome. Current snapshot

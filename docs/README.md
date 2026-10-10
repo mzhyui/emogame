@@ -25,6 +25,7 @@
 | 17 | [Vue 与前端设计：25 页 PPT 提纲](17-vue-frontend-design-ppt-outline.md) | Vue 3 基础、EmoGame 看板数据流与前端设计的 25 页英文演示提纲 |
 | 19 | [CS329A Test-Time Compute Scaling](19-cs329a-test-time-compute-scaling.md) | Part 2 推理计算扩展、官方作业接口、验证与修订、Archon、成本核算和评估方法 |
 | 20 | [CS329A Robust Verification](20-cs329a-robust-verification.md) | Part 3 判别式验证、ORM/PRM、Math-Shepherd、弱验证器集成、官方作业接口与 EmoGame 证据核验 |
+| 21 | [JEV 判别式验证器](21-jev-decision-verifier.md) | 决策模型 judge/evaluator/verifier 分工、claim 级验证的实测边界、阈值校准协议与接入 generate_report 的分阶段计划 |
 
 ## 快速导航
 
