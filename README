@@ -173,14 +173,19 @@ local development/build-preview tools. If using a separate API origin, set
 ## TODO
 
 - TODO 2026-08-07 git.V.44214: separate data utils and data assets
-- [ ] Submodule persistence (2026-09-23): create or verify forks of `minimind`
-      and `sakai-vue` under `mzhyui`; preserve the existing local commits, keep
+- [x] Sakai fork setup (2026-10-10): use
+      `git@github.com:mzhyui/sakai-vue-emogame.git` as `origin`, retain
+      `https://github.com/primefaces/sakai-vue.git` as local `upstream`, and
+      publish `a30e459` on the fork's `master`. `.gitmodules` and the local
+      submodule URL now point to the fork.
+- [ ] Submodule persistence (2026-09-23): create or verify a fork of `minimind`
+      under `mzhyui`; preserve the existing local commits, keep
       the original repositories as `upstream`, and use our forks as `origin`.
 - [ ] Publish the custom commits on durable branches in repositories we control:
-      `minimind` (`54d11bd`), `sakai-vue` (`a30e459`), and `weiboSpider`
+      `minimind` (`54d11bd`) and `weiboSpider`
       (`5dc4d76`). Their publication was not verified against live GitHub;
       check remote availability before marking this complete.
-- [ ] Update `.gitmodules` to use our MiniMind and Sakai forks, synchronize local
+- [ ] Update `.gitmodules` to use our MiniMind fork, synchronize local
       submodule URLs with `git submodule sync --recursive`, and commit the URL
       changes and submodule pointers in `emogame` after publishing the submodule
       commits. `weiboSpider` and `hero-skin-image` already use our namespace.

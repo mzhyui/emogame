@@ -15,4 +15,4 @@
 	url = git@github.com:Sven-Bo/streamlit-sales-dashboard.git
 [submodule "sakai-vue"]
 	path = sakai-vue
-	url = https://github.com/primefaces/sakai-vue.git
+	url = git@github.com:mzhyui/sakai-vue-emogame.git
